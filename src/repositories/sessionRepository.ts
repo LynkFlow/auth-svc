@@ -114,3 +114,30 @@ export async function findActiveSession(
 
     return rows[0] ?? null;
 }
+
+export async function revokeUserSessions(
+    client: PoolClient,
+    userId: string,
+    exceptSessionId?: string,
+): Promise<number> {
+    const parameters: string[] = [userId];
+    let exceptionClause = "";
+
+    if (exceptSessionId !== undefined) {
+        parameters.push(exceptSessionId);
+        exceptionClause = "AND id <> $2";
+    }
+
+    const result = await client.query(
+        `
+            UPDATE auth_sessions
+            SET revoked_at = NOW()
+            WHERE user_id = $1
+              AND revoked_at IS NULL
+              ${exceptionClause}
+        `,
+        parameters,
+    );
+
+    return result.rowCount ?? 0;
+}

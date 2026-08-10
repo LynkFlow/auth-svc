@@ -13,7 +13,6 @@ export interface ActivationRecord {
     consumedAt: Date | null;
     revokedAt: Date | null;
 }
-
 interface ActivationRow extends ActivationRecord, QueryResultRow {}
 
 interface CreatedTokenRow extends QueryResultRow {
@@ -158,29 +157,5 @@ export async function consumeTokenAndRevokeOthers(
               AND revoked_at IS NULL
         `,
         [userId, activationId],
-    );
-}
-
-export async function enqueueActivatedNotification(
-    client: PoolClient,
-    activation: ActivationRecord,
-): Promise<void> {
-    await client.query(
-        `
-            INSERT INTO auth_outbox_events (
-                event_type,
-                aggregate_id,
-                payload
-            ) VALUES ('account.activated', $1, $2::jsonb)
-        `,
-        [
-            activation.userId,
-            JSON.stringify({
-                userId: activation.userId,
-                email: activation.email,
-                fullName: activation.fullName,
-                channel: "email",
-            }),
-        ],
     );
 }

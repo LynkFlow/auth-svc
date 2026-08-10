@@ -64,6 +64,50 @@ Activation tokens are random 256-bit values. Only their SHA-256 hashes are store
 
 The password policy and 24-hour token validity default are stored in `auth_settings` so they can be changed without redeploying the service. The default password policy requires 12-128 characters containing uppercase, lowercase, numeric, and symbol characters.
 
+## Password management API
+
+Request a password reset with `POST /api/v1/auth/password/forgot`:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+The endpoint always returns the same accepted response for syntactically valid email addresses, whether or not an active account exists. For active accounts, it invalidates previous links, creates a one-time 256-bit token with a configurable 30-minute default lifetime, and queues a `password.reset.requested` email event.
+
+Validate a reset link with `POST /api/v1/auth/password/reset/validate`:
+
+```json
+{
+  "token": "password-reset-token"
+}
+```
+
+Complete a reset with `POST /api/v1/auth/password/reset`:
+
+```json
+{
+  "token": "password-reset-token",
+  "newPassword": "New Secure Password 84!",
+  "confirmPassword": "New Secure Password 84!"
+}
+```
+
+A successful reset updates the Argon2id password hash, consumes the supplied token, invalidates every other reset token for the account, resets login-failure state, terminates all sessions by default, and queues a `password.reset.completed` email event.
+
+An authenticated user can change their password with `POST /api/v1/auth/password/change`:
+
+```json
+{
+  "currentPassword": "Current Password 42!",
+  "newPassword": "New Secure Password 84!",
+  "confirmPassword": "New Secure Password 84!"
+}
+```
+
+The route operates only on the session user's account. It verifies the current password, rejects password reuse, enforces the configured policy, invalidates outstanding reset links, preserves the current session, terminates other sessions by default, and queues a `password.changed` email event.
+
 ## Security defaults
 
 - Argon2id password hashing (19 MiB memory, two iterations, one lane)
@@ -78,6 +122,9 @@ The password policy and 24-hour token validity default are stored in `auth_setti
 - Authentication responses marked `no-store`
 - One-time, expiring account-activation tokens stored only as hashes
 - Transactional agreement acceptance and activation notification outbox
+- Generic forgot-password responses that prevent account enumeration
+- Single-use password-reset tokens with configurable expiry
+- Configurable session termination after password reset or change
 
 Session and lockout values are stored in the singleton `auth_settings` row so a future Platform Administrator endpoint can update them without redeploying the service.
 

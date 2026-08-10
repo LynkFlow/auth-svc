@@ -13,15 +13,30 @@ const activationPassword = z
         "Password is too long.",
     );
 
+const passwordResetToken = z
+    .string({ error: "Password reset token is required." })
+    .min(1, "Password reset token is required.")
+    .max(512, "Password reset token is too long.");
+
+const emailAddress = z
+    .string({ error: "Email address is required." })
+    .trim()
+    .min(1, "Email address is required.")
+    .max(254, "Email address is too long.")
+    .email("Invalid email format.")
+    .transform((value) => value.toLowerCase());
+
+const passwordConfirmation = z
+    .string({ error: "Password confirmation is required." })
+    .min(1, "Password confirmation is required.")
+    .refine(
+        (value) => Buffer.byteLength(value, "utf8") <= 1_024,
+        "Password confirmation is too long.",
+    );
+
 export const loginSchema = z
     .object({
-        email: z
-            .string({ error: "Email address is required." })
-            .trim()
-            .min(1, "Email address is required.")
-            .max(254, "Email address is too long.")
-            .email("Email address must be valid.")
-            .transform((value) => value.toLowerCase()),
+        email: emailAddress,
         password: z
             .string({ error: "Password is required." })
             .min(1, "Password is required.")
@@ -92,3 +107,56 @@ export type ValidateActivationInput = z.infer<
 export type CompleteActivationInput = z.infer<
     typeof completeActivationSchema
 >;
+
+export const forgotPasswordSchema = z
+    .object({
+        email: emailAddress,
+    })
+    .strict();
+
+export const validatePasswordResetSchema = z
+    .object({
+        token: passwordResetToken,
+    })
+    .strict();
+
+export const resetPasswordSchema = z
+    .object({
+        token: passwordResetToken,
+        newPassword: activationPassword,
+        confirmPassword: passwordConfirmation,
+    })
+    .strict()
+    .superRefine((value, context) => {
+        if (value.newPassword !== value.confirmPassword) {
+            context.addIssue({
+                code: "custom",
+                path: ["confirmPassword"],
+                message: "Password confirmation does not match.",
+            });
+        }
+    });
+
+export const changePasswordSchema = z
+    .object({
+        currentPassword: activationPassword,
+        newPassword: activationPassword,
+        confirmPassword: passwordConfirmation,
+    })
+    .strict()
+    .superRefine((value, context) => {
+        if (value.newPassword !== value.confirmPassword) {
+            context.addIssue({
+                code: "custom",
+                path: ["confirmPassword"],
+                message: "Password confirmation does not match.",
+            });
+        }
+    });
+
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ValidatePasswordResetInput = z.infer<
+    typeof validatePasswordResetSchema
+>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

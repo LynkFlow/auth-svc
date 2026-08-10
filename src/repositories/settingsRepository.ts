@@ -16,6 +16,9 @@ export interface AuthSettings {
     passwordRequireSymbol: boolean;
     currentTermsVersion: string;
     currentPrivacyPolicyVersion: string;
+    passwordResetTokenValidityMinutes: number;
+    terminateSessionsOnPasswordReset: boolean;
+    terminateOtherSessionsOnPasswordChange: boolean;
 }
 
 interface AuthSettingsRow extends AuthSettings, QueryResultRow {}
@@ -38,7 +41,10 @@ export async function getAuthSettings(
             password_require_number AS "passwordRequireNumber",
             password_require_symbol AS "passwordRequireSymbol",
             current_terms_version AS "currentTermsVersion",
-            current_privacy_policy_version AS "currentPrivacyPolicyVersion"
+            current_privacy_policy_version AS "currentPrivacyPolicyVersion",
+            password_reset_token_validity_minutes AS "passwordResetTokenValidityMinutes",
+            terminate_sessions_on_password_reset AS "terminateSessionsOnPasswordReset",
+            terminate_other_sessions_on_password_change AS "terminateOtherSessionsOnPasswordChange"
         FROM auth_settings
         WHERE singleton = TRUE
     `);

@@ -4,12 +4,89 @@ import {
     completeActivation as activateAccount,
     validateActivationToken,
 } from "../services/activationService";
+import {
+    changePassword as changeUserPassword,
+    requestPasswordReset,
+    resetPassword as resetUserPassword,
+    validatePasswordResetToken,
+} from "../services/passwordManagementService";
 import config from "../config/env";
 import type {
+    ChangePasswordInput,
     CompleteActivationInput,
+    ForgotPasswordInput,
     LoginInput,
+    ResetPasswordInput,
     ValidateActivationInput,
+    ValidatePasswordResetInput,
 } from "../validators/authSchemas";
+
+export async function forgotPassword(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const body = req.validatedBody as ForgotPasswordInput;
+    await requestPasswordReset(body.email);
+
+    return res.status(202).json({
+        success: true,
+        message:
+            "If the email address exists in our system, a password reset link has been sent.",
+    });
+}
+
+export async function validatePasswordReset(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const body = req.validatedBody as ValidatePasswordResetInput;
+    const reset = await validatePasswordResetToken(body.token);
+
+    return res.status(200).json({
+        success: true,
+        message: "Password reset link is valid.",
+        data: reset,
+    });
+}
+
+export async function resetPassword(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const body = req.validatedBody as ResetPasswordInput;
+    const result = await resetUserPassword(body.token, body.newPassword);
+
+    res.clearCookie(config.sessionCookieName, { path: "/" });
+    return res.status(200).json({
+        success: true,
+        message:
+            "Your password has been reset successfully. Please log in using your new password.",
+        data: result,
+    });
+}
+
+export async function changePassword(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const body = req.validatedBody as ChangePasswordInput;
+    const session = req.auth;
+    if (!session) {
+        throw new Error("Authenticated session context is missing.");
+    }
+
+    await changeUserPassword({
+        userId: session.userId,
+        sessionId: session.sessionId,
+        currentPassword: body.currentPassword,
+        newPassword: body.newPassword,
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: "Your password has been changed successfully.",
+    });
+}
 
 export async function validateActivation(
     req: Request,

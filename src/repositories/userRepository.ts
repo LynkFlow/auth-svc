@@ -15,6 +15,10 @@ interface LoginSuccessRow extends QueryResultRow {
     lastLoginAt: Date;
 }
 
+interface UpdatedPasswordRow extends QueryResultRow {
+    id: string;
+}
+
 const USER_SELECT = `
     SELECT
         u.id,
@@ -114,4 +118,27 @@ export async function recordSuccessfulLogin(
     );
 
     return rows[0] ?? null;
+}
+
+export async function updatePassword(
+    client: PoolClient,
+    userId: string,
+    passwordHash: string,
+): Promise<boolean> {
+    const { rows } = await client.query<UpdatedPasswordRow>(
+        `
+            UPDATE users
+            SET
+                password_hash = $2,
+                failed_login_attempts = 0,
+                locked_until = NULL,
+                updated_at = NOW()
+            WHERE id = $1
+              AND account_status = 'active'
+            RETURNING id
+        `,
+        [userId, passwordHash],
+    );
+
+    return rows.length === 1;
 }

@@ -4,6 +4,7 @@ import AppError from "../errors/AppError";
 import { ACCOUNT_STATUS } from "../models/userModel";
 import * as activationRepository from "../repositories/activationRepository";
 import type { ActivationRecord } from "../repositories/activationRepository";
+import * as outboxRepository from "../repositories/outboxRepository";
 import * as settingsRepository from "../repositories/settingsRepository";
 import * as userRepository from "../repositories/userRepository";
 import * as passwordService from "./passwordService";
@@ -172,9 +173,16 @@ export async function completeActivation(
             currentActivation.id,
             currentActivation.userId,
         );
-        await activationRepository.enqueueActivatedNotification(
+        await outboxRepository.enqueueEvent(
             client,
-            currentActivation,
+            "account.activated",
+            currentActivation.userId,
+            {
+                userId: currentActivation.userId,
+                email: currentActivation.email,
+                fullName: currentActivation.fullName,
+                channel: "email",
+            },
         );
 
         await client.query("COMMIT");

@@ -11,7 +11,8 @@ interface AppliedMigrationRow extends QueryResultRow {
 const migrationsDirectory = path.resolve(process.cwd(), "migrations");
 
 function checksum(content: string): string {
-    return createHash("sha256").update(content).digest("hex");
+    const normalizedContent = content.replace(/\r\n/g, "\n");
+    return createHash("sha256").update(normalizedContent).digest("hex");
 }
 
 async function migrate(): Promise<void> {
