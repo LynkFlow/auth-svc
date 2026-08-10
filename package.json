@@ -12,7 +12,7 @@
     "db:migrate": "npm run build && npm run db:migrate:production",
     "db:migrate:production": "node dist/scripts/migrate.js",
     "pretest": "npm run db:migrate",
-    "test": "npm run build:test && node --test --test-concurrency=1 dist-test/test/auth.login.test.js"
+    "test": "npm run build:test && node --test --test-concurrency=1 dist-test/test/auth.login.test.js dist-test/test/auth.activation.test.js"
   },
   "keywords": [],
   "author": "",

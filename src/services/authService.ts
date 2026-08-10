@@ -98,7 +98,7 @@ export async function login({
         userRepository.findByEmail(email),
     ]);
 
-    const passwordHash = user ? user.passwordHash : await dummyHashPromise;
+    const passwordHash = user?.passwordHash ?? (await dummyHashPromise);
     const passwordMatches = await passwordService.verifyPassword(
         passwordHash,
         password,

@@ -36,6 +36,34 @@ Successful authentication returns the safe user profile, role, permissions, and 
 
 Account status responses are returned only after the submitted password is verified. Unknown accounts and incorrect passwords receive the same generic error.
 
+## Account activation API
+
+Validate an activation link with `POST /api/v1/auth/activation/validate`:
+
+```json
+{
+  "token": "43-character-base64url-token"
+}
+```
+
+The response contains the invited account's read-only organization name, full name, email address, current agreement versions, and token expiry.
+
+Complete activation with `POST /api/v1/auth/activation/complete`:
+
+```json
+{
+  "token": "43-character-base64url-token",
+  "password": "Secure Activation 42!",
+  "confirmPassword": "Secure Activation 42!",
+  "termsAccepted": true,
+  "privacyPolicyAccepted": true
+}
+```
+
+Activation tokens are random 256-bit values. Only their SHA-256 hashes are stored. A successful activation atomically hashes the initial password with Argon2id, records the current agreement versions, marks the account active, consumes the token, revokes other outstanding activation tokens, and queues an `account.activated` email event in `auth_outbox_events`.
+
+The password policy and 24-hour token validity default are stored in `auth_settings` so they can be changed without redeploying the service. The default password policy requires 12-128 characters containing uppercase, lowercase, numeric, and symbol characters.
+
 ## Security defaults
 
 - Argon2id password hashing (19 MiB memory, two iterations, one lane)
@@ -48,6 +76,8 @@ Account status responses are returned only after the submitted password is verif
 - Parameterized PostgreSQL queries and strict request validation
 - Helmet security headers and disabled Express fingerprinting
 - Authentication responses marked `no-store`
+- One-time, expiring account-activation tokens stored only as hashes
+- Transactional agreement acceptance and activation notification outbox
 
 Session and lockout values are stored in the singleton `auth_settings` row so a future Platform Administrator endpoint can update them without redeploying the service.
 

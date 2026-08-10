@@ -1,7 +1,44 @@
 import type { CookieOptions, Request, Response } from "express";
 import { login as loginUser } from "../services/authService";
+import {
+    completeActivation as activateAccount,
+    validateActivationToken,
+} from "../services/activationService";
 import config from "../config/env";
-import type { LoginInput } from "../validators/authSchemas";
+import type {
+    CompleteActivationInput,
+    LoginInput,
+    ValidateActivationInput,
+} from "../validators/authSchemas";
+
+export async function validateActivation(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const body = req.validatedBody as ValidateActivationInput;
+    const activation = await validateActivationToken(body.token);
+
+    return res.status(200).json({
+        success: true,
+        message: "Activation link is valid.",
+        data: activation,
+    });
+}
+
+export async function completeActivation(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const body = req.validatedBody as CompleteActivationInput;
+    const result = await activateAccount(body.token, body.password);
+
+    return res.status(200).json({
+        success: true,
+        message:
+            "Your account has been activated successfully. Please log in to continue.",
+        data: result,
+    });
+}
 
 export async function login(req: Request, res: Response): Promise<Response> {
     const userAgent = req.get("user-agent");

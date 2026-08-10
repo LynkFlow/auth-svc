@@ -11,7 +11,7 @@ export type AccountStatus =
 export interface UserRecord {
     id: string;
     email: string;
-    passwordHash: string;
+    passwordHash: string | null;
     accountStatus: AccountStatus;
     failedLoginAttempts: number;
     lockedUntil: Date | null;
