@@ -30,6 +30,11 @@ interface SessionVerificationRow extends QueryResultRow {
     tokensAreHashed: boolean;
 }
 
+interface LogoutSessionVerificationRow extends QueryResultRow {
+    activeSessions: number;
+    revokedSessions: number;
+}
+
 const protectedApp = express();
 protectedApp.use(cookieParser());
 protectedApp.get("/protected", authenticate, (req, res) => {
@@ -236,4 +241,83 @@ test("rejects access to protected handlers without an active session", async () 
 
     assert.equal(response.status, 401);
     assert.equal(response.body.error.code, "AUTH_SESSION_EXPIRED");
+});
+
+test("requires an authenticated session to log out", async () => {
+    const response = await request(app).post("/api/v1/auth/logout");
+
+    assert.equal(response.status, 401);
+    assert.equal(response.body.error.code, "AUTH_SESSION_EXPIRED");
+});
+
+test("logs out only the current session and expires its cookie", async () => {
+    const user = await createUser("logout");
+    const [currentLogin, otherLogin] = await Promise.all([
+        request(app)
+            .post("/api/v1/auth/login")
+            .send({ email: user.email, password }),
+        request(app)
+            .post("/api/v1/auth/login")
+            .send({ email: user.email, password }),
+    ]);
+
+    assert.equal(currentLogin.status, 200);
+    assert.equal(otherLogin.status, 200);
+
+    const currentCookies = currentLogin.headers["set-cookie"] as
+        | string[]
+        | undefined;
+    const otherCookies = otherLogin.headers["set-cookie"] as
+        | string[]
+        | undefined;
+    assert.ok(currentCookies);
+    assert.ok(otherCookies);
+
+    const response = await request(app)
+        .post("/api/v1/auth/logout")
+        .set("Cookie", currentCookies);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.message, "Logout successful.");
+    assert.equal(response.body.data.redirectPath, "/");
+    assert.equal(response.headers["cache-control"], "no-store");
+
+    const clearedCookies = response.headers["set-cookie"] as
+        | string[]
+        | undefined;
+    assert.ok(clearedCookies);
+    const clearedSessionCookie = clearedCookies[0];
+    assert.ok(clearedSessionCookie);
+    assert.match(clearedSessionCookie, /^lf\.sid=;/);
+    assert.match(clearedSessionCookie, /Expires=Thu, 01 Jan 1970/i);
+    assert.match(clearedSessionCookie, /HttpOnly/i);
+    assert.match(clearedSessionCookie, /SameSite=Strict/i);
+    assert.match(clearedSessionCookie, /Priority=High/i);
+
+    const { rows } = await pool.query<LogoutSessionVerificationRow>(
+        `
+            SELECT
+                count(*) FILTER (WHERE revoked_at IS NULL)::int AS "activeSessions",
+                count(*) FILTER (WHERE revoked_at IS NOT NULL)::int AS "revokedSessions"
+            FROM auth_sessions
+            WHERE user_id = $1
+        `,
+        [user.id],
+    );
+    const verification = rows[0];
+    assert.ok(verification);
+    assert.equal(verification.activeSessions, 1);
+    assert.equal(verification.revokedSessions, 1);
+
+    const loggedOutRequest = await request(protectedApp)
+        .get("/protected")
+        .set("Cookie", currentCookies);
+    assert.equal(loggedOutRequest.status, 401);
+    assert.equal(loggedOutRequest.body.error.code, "AUTH_SESSION_EXPIRED");
+
+    const otherSessionRequest = await request(protectedApp)
+        .get("/protected")
+        .set("Cookie", otherCookies);
+    assert.equal(otherSessionRequest.status, 200);
+    assert.equal(otherSessionRequest.body.auth.userId, user.id);
 });

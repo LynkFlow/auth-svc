@@ -199,3 +199,7 @@ export async function login({
         client.release();
     }
 }
+
+export async function logout(sessionId: string): Promise<void> {
+    await sessionRepository.revokeSession(sessionId);
+}

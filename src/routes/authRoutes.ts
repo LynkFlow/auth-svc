@@ -5,6 +5,7 @@ import {
     completeActivation,
     forgotPassword,
     login,
+    logout,
     resetPassword,
     validateActivation,
     validatePasswordReset,
@@ -132,6 +133,7 @@ const changePasswordLimiter = rateLimit({
 });
 
 router.post("/login", loginLimiter, validate(loginSchema), login);
+router.post("/logout", authenticate, logout);
 router.post(
     "/activation/validate",
     activationLimiter,

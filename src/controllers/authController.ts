@@ -1,5 +1,8 @@
 import type { CookieOptions, Request, Response } from "express";
-import { login as loginUser } from "../services/authService";
+import {
+    login as loginUser,
+    logout as logoutUser,
+} from "../services/authService";
 import {
     completeActivation as activateAccount,
     validateActivationToken,
@@ -11,6 +14,7 @@ import {
     validatePasswordResetToken,
 } from "../services/passwordManagementService";
 import config from "../config/env";
+import sessionCookieOptions from "../config/sessionCookie";
 import type {
     ChangePasswordInput,
     CompleteActivationInput,
@@ -56,7 +60,7 @@ export async function resetPassword(
     const body = req.validatedBody as ResetPasswordInput;
     const result = await resetUserPassword(body.token, body.newPassword);
 
-    res.clearCookie(config.sessionCookieName, { path: "/" });
+    res.clearCookie(config.sessionCookieName, sessionCookieOptions());
     return res.status(200).json({
         success: true,
         message:
@@ -85,6 +89,24 @@ export async function changePassword(
     return res.status(200).json({
         success: true,
         message: "Your password has been changed successfully.",
+    });
+}
+
+export async function logout(req: Request, res: Response): Promise<Response> {
+    const session = req.auth;
+    if (!session) {
+        throw new Error("Authenticated session context is missing.");
+    }
+
+    await logoutUser(session.sessionId);
+    res.clearCookie(config.sessionCookieName, sessionCookieOptions());
+
+    return res.status(200).json({
+        success: true,
+        message: "Logout successful.",
+        data: {
+            redirectPath: "/",
+        },
     });
 }
 
@@ -129,13 +151,7 @@ export async function login(req: Request, res: Response): Promise<Response> {
         userAgent: userAgent ? userAgent.slice(0, 512) : null,
     });
 
-    const cookieOptions: CookieOptions = {
-        httpOnly: true,
-        secure: config.cookieSecure,
-        sameSite: config.cookieSameSite,
-        path: "/",
-        priority: "high",
-    };
+    const cookieOptions: CookieOptions = sessionCookieOptions();
 
     if (body.rememberMe) {
         cookieOptions.expires = result.session.expiresAt;

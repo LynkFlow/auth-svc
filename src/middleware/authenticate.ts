@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import config from "../config/env";
+import sessionCookieOptions from "../config/sessionCookie";
 import { findActiveSession } from "../repositories/sessionRepository";
 import AppError from "../errors/AppError";
 
@@ -26,7 +27,7 @@ export default async function authenticate(
     const session = await findActiveSession(tokenHash);
 
     if (!session) {
-        res.clearCookie(config.sessionCookieName, { path: "/" });
+        res.clearCookie(config.sessionCookieName, sessionCookieOptions());
         next(
             new AppError(
                 401,

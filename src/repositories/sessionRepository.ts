@@ -1,4 +1,4 @@
-import type { PoolClient, QueryResultRow } from "pg";
+import type { Pool, PoolClient, QueryResultRow } from "pg";
 import pool from "../db/pool";
 
 export interface NewSession {
@@ -113,6 +113,23 @@ export async function findActiveSession(
     );
 
     return rows[0] ?? null;
+}
+
+export async function revokeSession(
+    sessionId: string,
+    db: Pool | PoolClient = pool,
+): Promise<boolean> {
+    const result = await db.query(
+        `
+            UPDATE auth_sessions
+            SET revoked_at = NOW()
+            WHERE id = $1
+              AND revoked_at IS NULL
+        `,
+        [sessionId],
+    );
+
+    return result.rowCount === 1;
 }
 
 export async function revokeUserSessions(

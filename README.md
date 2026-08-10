@@ -36,6 +36,16 @@ Successful authentication returns the safe user profile, role, permissions, and 
 
 Account status responses are returned only after the submitted password is verified. Unknown accounts and incorrect passwords receive the same generic error.
 
+## Logout API
+
+An authenticated user can terminate their current session with:
+
+```http
+POST /api/v1/auth/logout
+```
+
+The request uses the HTTP-only session cookie and requires no request body. A successful logout revokes only the current database session, expires the session cookie, and returns `/` as the Welcome-page redirect target. Other active sessions for the same account are not affected. Frontend confirmation and navigation are handled by the client application.
+
 ## Account activation API
 
 Validate an activation link with `POST /api/v1/auth/activation/validate`:
