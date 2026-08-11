@@ -19,6 +19,24 @@ interface UpdatedPasswordRow extends QueryResultRow {
     id: string;
 }
 
+interface CreatedUserRow extends QueryResultRow {
+    id: string;
+    email: string;
+}
+
+export interface PendingRegistration {
+    email: string;
+    passwordHash: string;
+    roleCode: string;
+    fullName: string;
+    organizationName: string;
+}
+
+export interface CreatedUser {
+    id: string;
+    email: string;
+}
+
 const USER_SELECT = `
     SELECT
         u.id,
@@ -61,6 +79,43 @@ export async function findByIdForUpdate(
     const { rows } = await client.query<UserRow>(
         `${USER_SELECT} WHERE u.id = $1 FOR UPDATE OF u`,
         [userId],
+    );
+
+    return rows[0] ?? null;
+}
+
+export async function createPendingRegistration(
+    client: PoolClient,
+    registration: PendingRegistration,
+): Promise<CreatedUser | null> {
+    const { rows } = await client.query<CreatedUserRow>(
+        `
+            INSERT INTO users (
+                email,
+                password_hash,
+                role_id,
+                account_status,
+                full_name,
+                organization_name
+            )
+            SELECT
+                $1,
+                $2,
+                roles.id,
+                'pending_activation',
+                $4,
+                $5
+            FROM roles
+            WHERE roles.code = $3
+            RETURNING id, email::text AS email
+        `,
+        [
+            registration.email,
+            registration.passwordHash,
+            registration.roleCode,
+            registration.fullName,
+            registration.organizationName,
+        ],
     );
 
     return rows[0] ?? null;

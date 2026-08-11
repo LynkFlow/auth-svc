@@ -59,14 +59,15 @@ export const validateActivationSchema = z
 export const completeActivationSchema = z
     .object({
         token: activationToken,
-        password: activationPassword,
+        password: activationPassword.optional(),
         confirmPassword: z
-            .string({ error: "Password confirmation is required." })
+            .string()
             .min(1, "Password confirmation is required.")
             .refine(
                 (value) => Buffer.byteLength(value, "utf8") <= 1_024,
                 "Password confirmation is too long.",
-            ),
+            )
+            .optional(),
         termsAccepted: z.boolean({
             error: "Terms & Conditions acceptance is required.",
         }),
@@ -76,7 +77,33 @@ export const completeActivationSchema = z
     })
     .strict()
     .superRefine((value, context) => {
-        if (value.password !== value.confirmPassword) {
+        if (
+            value.password === undefined &&
+            value.confirmPassword !== undefined
+        ) {
+            context.addIssue({
+                code: "custom",
+                path: ["password"],
+                message: "Password is required.",
+            });
+        }
+
+        if (
+            value.password !== undefined &&
+            value.confirmPassword === undefined
+        ) {
+            context.addIssue({
+                code: "custom",
+                path: ["confirmPassword"],
+                message: "Password confirmation is required.",
+            });
+        }
+
+        if (
+            value.password !== undefined &&
+            value.confirmPassword !== undefined &&
+            value.password !== value.confirmPassword
+        ) {
             context.addIssue({
                 code: "custom",
                 path: ["confirmPassword"],
@@ -107,6 +134,30 @@ export type ValidateActivationInput = z.infer<
 export type CompleteActivationInput = z.infer<
     typeof completeActivationSchema
 >;
+
+export const signupSchema = z
+    .object({
+        accountType: z.enum([
+            "real_estate_developer",
+            "brokerage_company",
+            "sales_agent",
+        ]),
+        fullName: z
+            .string({ error: "Full name is required." })
+            .trim()
+            .min(2, "Full name must contain at least 2 characters.")
+            .max(200, "Full name is too long."),
+        email: emailAddress,
+        company: z
+            .string({ error: "Company is required." })
+            .trim()
+            .min(1, "Company is required.")
+            .max(200, "Company is too long."),
+        password: activationPassword,
+    })
+    .strict();
+
+export type SignupInput = z.infer<typeof signupSchema>;
 
 export const forgotPasswordSchema = z
     .object({

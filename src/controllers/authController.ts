@@ -13,6 +13,7 @@ import {
     resetPassword as resetUserPassword,
     validatePasswordResetToken,
 } from "../services/passwordManagementService";
+import { signup as registerUser } from "../services/signupService";
 import config from "../config/env";
 import sessionCookieOptions from "../config/sessionCookie";
 import type {
@@ -21,9 +22,22 @@ import type {
     ForgotPasswordInput,
     LoginInput,
     ResetPasswordInput,
+    SignupInput,
     ValidateActivationInput,
     ValidatePasswordResetInput,
 } from "../validators/authSchemas";
+
+export async function signup(req: Request, res: Response): Promise<Response> {
+    const body = req.validatedBody as SignupInput;
+    const result = await registerUser(body);
+
+    return res.status(201).json({
+        success: true,
+        message:
+            "Account created. Check your email to activate your account.",
+        data: result,
+    });
+}
 
 export async function forgotPassword(
     req: Request,

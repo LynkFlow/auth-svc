@@ -7,6 +7,7 @@ import {
     login,
     logout,
     resetPassword,
+    signup,
     validateActivation,
     validatePasswordReset,
 } from "../controllers/authController";
@@ -18,6 +19,7 @@ import {
     forgotPasswordSchema,
     loginSchema,
     resetPasswordSchema,
+    signupSchema,
     validateActivationSchema,
     validatePasswordResetSchema,
 } from "../validators/authSchemas";
@@ -43,6 +45,23 @@ const loginLimiter = rateLimit({
             error: {
                 code: "AUTH_RATE_LIMITED",
                 message: "Too many login attempts. Please try again later.",
+            },
+        });
+    },
+});
+
+const signupLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    handler: (_req: Request, res: Response) => {
+        res.status(429).json({
+            success: false,
+            error: {
+                code: "AUTH_SIGNUP_RATE_LIMITED",
+                message:
+                    "Too many sign-up attempts. Please try again later.",
             },
         });
     },
@@ -132,6 +151,7 @@ const changePasswordLimiter = rateLimit({
     },
 });
 
+router.post("/signup", signupLimiter, validate(signupSchema), signup);
 router.post("/login", loginLimiter, validate(loginSchema), login);
 router.post("/logout", authenticate, logout);
 router.post(

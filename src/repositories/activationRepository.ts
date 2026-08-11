@@ -9,6 +9,7 @@ export interface ActivationRecord {
     fullName: string | null;
     organizationName: string | null;
     accountStatus: AccountStatus;
+    hasPassword: boolean;
     expiresAt: Date;
     consumedAt: Date | null;
     revokedAt: Date | null;
@@ -31,6 +32,7 @@ const ACTIVATION_SELECT = `
         users.full_name AS "fullName",
         users.organization_name AS "organizationName",
         users.account_status AS "accountStatus",
+        users.password_hash IS NOT NULL AS "hasPassword",
         activation.expires_at AS "expiresAt",
         activation.consumed_at AS "consumedAt",
         activation.revoked_at AS "revokedAt"
@@ -99,7 +101,7 @@ export async function createToken(
 export async function activateUser(
     client: PoolClient,
     userId: string,
-    passwordHash: string,
+    passwordHash: string | null,
     termsVersion: string,
     privacyPolicyVersion: string,
 ): Promise<boolean> {
@@ -107,7 +109,7 @@ export async function activateUser(
         `
             UPDATE users
             SET
-                password_hash = $2,
+                password_hash = COALESCE($2::text, password_hash),
                 account_status = 'active',
                 activated_at = NOW(),
                 terms_accepted_at = NOW(),
@@ -119,6 +121,7 @@ export async function activateUser(
                 updated_at = NOW()
             WHERE id = $1
               AND account_status = 'pending_activation'
+              AND (password_hash IS NOT NULL OR $2::text IS NOT NULL)
             RETURNING id
         `,
         [userId, passwordHash, termsVersion, privacyPolicyVersion],

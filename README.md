@@ -36,6 +36,24 @@ Successful authentication returns the safe user profile, role, permissions, and 
 
 Account status responses are returned only after the submitted password is verified. Unknown accounts and incorrect passwords receive the same generic error.
 
+## Sign-up API
+
+Create a self-service account with `POST /api/v1/auth/signup`:
+
+```json
+{
+  "accountType": "real_estate_developer",
+  "fullName": "Example User",
+  "email": "user@example.com",
+  "company": "Example Company",
+  "password": "Secure Signup 42!"
+}
+```
+
+Supported account types are `real_estate_developer`, `brokerage_company`, and `sales_agent`. They map to the existing Developer Administrator, Brokerage Administrator, and Broker Agent roles respectively.
+
+A successful request creates a `pending_activation` user and atomically queues an `account.activation.requested` email event. Only the activation token's SHA-256 hash is stored in `account_activation_tokens`; the raw token is placed in the outbox payload for the future email worker and is never returned by the API.
+
 ## Logout API
 
 An authenticated user can terminate their current session with:
@@ -69,6 +87,8 @@ Complete activation with `POST /api/v1/auth/activation/complete`:
   "privacyPolicyAccepted": true
 }
 ```
+
+For accounts created through the sign-up endpoint, `password` and `confirmPassword` can be omitted from activation completion because the password was already securely hashed during sign-up. Invited accounts without a password must provide both fields.
 
 Activation tokens are random 256-bit values. Only their SHA-256 hashes are stored. A successful activation atomically hashes the initial password with Argon2id, records the current agreement versions, marks the account active, consumes the token, revokes other outstanding activation tokens, and queues an `account.activated` email event in `auth_outbox_events`.
 

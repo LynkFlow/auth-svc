@@ -56,6 +56,14 @@ function alreadyActivatedError(): AppError {
     );
 }
 
+function passwordRequiredError(): AppError {
+    return new AppError(
+        400,
+        "AUTH_ACTIVATION_PASSWORD_REQUIRED",
+        "A password is required to activate this account.",
+    );
+}
+
 function assertActivatable(
     activation: ActivationRecord | null,
     now = new Date(),
@@ -113,7 +121,7 @@ export async function validateActivationToken(
 
 export async function completeActivation(
     token: string,
-    password: string,
+    password?: string,
 ): Promise<{ loginPath: string }> {
     const tokenHash = hashToken(token);
     const [activation, settings] = await Promise.all([
@@ -123,28 +131,36 @@ export async function completeActivation(
 
     assertActivatable(activation);
 
-    const policyViolations = passwordService.passwordPolicyViolations(
-        password,
-        {
-            minimumLength: settings.passwordMinLength,
-            maximumLength: settings.passwordMaxLength,
-            requireUppercase: settings.passwordRequireUppercase,
-            requireLowercase: settings.passwordRequireLowercase,
-            requireNumber: settings.passwordRequireNumber,
-            requireSymbol: settings.passwordRequireSymbol,
-        },
-    );
-
-    if (policyViolations.length > 0) {
-        throw new AppError(
-            400,
-            "AUTH_PASSWORD_POLICY_VIOLATION",
-            "Password does not comply with the password policy.",
-            policyViolations,
-        );
+    if (password === undefined && !activation.hasPassword) {
+        throw passwordRequiredError();
     }
 
-    const passwordHash = await passwordService.hashPassword(password);
+    let passwordHash: string | null = null;
+    if (password !== undefined) {
+        const policyViolations = passwordService.passwordPolicyViolations(
+            password,
+            {
+                minimumLength: settings.passwordMinLength,
+                maximumLength: settings.passwordMaxLength,
+                requireUppercase: settings.passwordRequireUppercase,
+                requireLowercase: settings.passwordRequireLowercase,
+                requireNumber: settings.passwordRequireNumber,
+                requireSymbol: settings.passwordRequireSymbol,
+            },
+        );
+
+        if (policyViolations.length > 0) {
+            throw new AppError(
+                400,
+                "AUTH_PASSWORD_POLICY_VIOLATION",
+                "Password does not comply with the password policy.",
+                policyViolations,
+            );
+        }
+
+        passwordHash = await passwordService.hashPassword(password);
+    }
+
     const client = await pool.connect();
 
     try {
@@ -156,6 +172,10 @@ export async function completeActivation(
             true,
         );
         assertActivatable(currentActivation);
+
+        if (passwordHash === null && !currentActivation.hasPassword) {
+            throw passwordRequiredError();
+        }
 
         const activated = await activationRepository.activateUser(
             client,

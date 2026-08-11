@@ -210,6 +210,25 @@ test("enforces the configured password policy", async () => {
     assert.ok(response.body.error.details.length >= 3);
 });
 
+test("requires a password for invited accounts that do not have one", async () => {
+    const user = await createPendingUser("password_required");
+    const issued = await activationService.issueActivationToken(user.id);
+
+    const response = await request(app)
+        .post("/api/v1/auth/activation/complete")
+        .send({
+            token: issued.token,
+            termsAccepted: true,
+            privacyPolicyAccepted: true,
+        });
+
+    assert.equal(response.status, 400);
+    assert.equal(
+        response.body.error.code,
+        "AUTH_ACTIVATION_PASSWORD_REQUIRED",
+    );
+});
+
 test("activates the account, records consent, and queues notification", async () => {
     const user = await createPendingUser("complete");
     const issued = await activationService.issueActivationToken(user.id);
