@@ -89,6 +89,8 @@ test("creates a pending account and queues a usable activation token", async () 
     assert.equal(response.body.data.email, payload.email.toLowerCase());
     assert.equal(response.body.data.accountStatus, "pending_activation");
     assert.equal("token" in response.body.data, false);
+    assert.equal("activationToken" in response.body.data, false);
+    assert.equal("activationPath" in response.body.data, false);
 
     const { rows } = await pool.query<SignupVerificationRow>(
         `

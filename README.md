@@ -4,6 +4,17 @@ TypeScript/Express/PostgreSQL authentication microservice for LynkFlow.
 
 ## Setup
 
+When working from the adjacent `base-fe` repository, the recommended setup is:
+
+```powershell
+cd ..\base-fe
+npm.cmd run setup:local
+npm.cmd run dev:stack
+```
+
+This uses an isolated PostgreSQL database on port 5433 and runs this service on
+port 4000. The manual setup below remains available for standalone use.
+
 1. Copy `.env.example` to `.env` and set `DATABASE_URL`. Percent-encode reserved characters in URL credentials.
 2. Run `npm install`.
 3. Run `npm run jwt:keys:generate` once to create ignored local development signing keys.
