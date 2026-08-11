@@ -17,8 +17,9 @@ port 4000. The manual setup below remains available for standalone use.
 
 1. Copy `.env.example` to `.env` and set `DATABASE_URL`. Percent-encode reserved characters in URL credentials.
 2. Run `npm install`.
-3. Run `npm run db:migrate`.
-4. Run `npm run dev`.
+3. Run `npm run jwt:keys:generate` once to create ignored local development signing keys.
+4. Run `npm run db:migrate`.
+5. Run `npm run dev`.
 
 The application validates its environment at startup and never logs the database URL.
 
@@ -30,6 +31,7 @@ The application validates its environment at startup and never logs the database
 - `npm start` starts the compiled production application from `dist/`.
 - `npm test` applies migrations, compiles the test target, and runs the integration suite.
 - `npm run db:migrate:production` applies migrations using an existing production build.
+- `npm run jwt:keys:generate` creates a local RSA key pair in the ignored `.secrets` directory. Production keys must be supplied through a secret manager or mounted secret files.
 
 ## Login API
 
@@ -43,7 +45,9 @@ The application validates its environment at startup and never logs the database
 }
 ```
 
-Successful authentication returns the safe user profile, role, permissions, and session expiry. The opaque session identifier is sent only in the HTTP-only `lf.sid` cookie and is stored in PostgreSQL only as a SHA-256 hash.
+Successful authentication returns the safe user profile and a signed RS256 access JWT. The JWT expires after 15 minutes and is sent to protected APIs as `Authorization: Bearer <access-token>`.
+
+The response also sets a rotating opaque refresh token in the HTTP-only `lf.refresh` cookie. Only its SHA-256 hash is stored in PostgreSQL. The cookie is scoped to `/api/v1/auth/token`, so it is not sent to normal application APIs.
 
 Account status responses are returned only after the submitted password is verified. Unknown accounts and incorrect passwords receive the same generic error.
 
@@ -70,10 +74,36 @@ A successful request creates a `pending_activation` user and atomically queues a
 An authenticated user can terminate their current session with:
 
 ```http
-POST /api/v1/auth/logout
+POST /api/v1/auth/token/logout
 ```
 
-The request uses the HTTP-only session cookie and requires no request body. A successful logout revokes only the current database session, expires the session cookie, and returns `/` as the Welcome-page redirect target. Other active sessions for the same account are not affected. Frontend confirmation and navigation are handled by the client application.
+The request has no body. The browser automatically sends the HTTP-only refresh-token cookie. Logout revokes only that refresh session, expires its cookie, and returns `/` as the Welcome-page redirect target. Other active sessions for the same account are not affected.
+
+Logout is idempotent: a missing, expired, invalid, or already-revoked cookie still receives a successful response and a cookie-clearing header. A forged cookie cannot revoke another session because its token hash must match either the current refresh credential or a credential previously issued within that token family.
+
+## Token refresh API
+
+Obtain a new access JWT with `POST /api/v1/auth/token/refresh`. The request has no body; the browser automatically sends the HTTP-only refresh-token cookie.
+
+```json
+{
+  "success": true,
+  "message": "Access token refreshed successfully.",
+  "data": {
+    "accessToken": "eyJ...",
+    "tokenType": "Bearer",
+    "expiresIn": 900,
+    "accessTokenExpiresAt": "2026-08-12T12:15:00.000Z",
+    "session": {
+      "expiresAt": "2026-08-12T20:00:00.000Z"
+    }
+  }
+}
+```
+
+Every successful refresh rotates the refresh token. Reusing an older token revokes that session family. A forged token does not revoke a legitimate session.
+
+Other microservices can verify access tokens with the public JWKS endpoint at `GET /.well-known/jwks.json`. The private signing key is never exposed.
 
 ## Account activation API
 
@@ -147,16 +177,21 @@ An authenticated user can change their password with `POST /api/v1/auth/password
 }
 ```
 
-The route operates only on the session user's account. It verifies the current password, rejects password reuse, enforces the configured policy, invalidates outstanding reset links, preserves the current session, terminates other sessions by default, and queues a `password.changed` email event.
+The route operates only on the Bearer token's user account. It verifies the current password, rejects password reuse, enforces the configured policy, invalidates outstanding reset links, preserves the current refresh session, terminates other sessions by default, and queues a `password.changed` email event.
 
 ## Security defaults
 
 - Argon2id password hashing (19 MiB memory, two iterations, one lane)
 - Persistent account lockout after five failures for 15 minutes
 - Per-IP login rate limiting
+- RS256 access JWTs with explicit issuer, audience, type, key ID, and algorithm validation
+- 15-minute access-token lifetime with a small configured clock tolerance
+- Public JWKS endpoint for independent microservice verification
+- Rotating random refresh tokens stored only as SHA-256 hashes
+- Refresh-token reuse detection and session-family revocation
 - 30-minute idle session timeout and 8-hour absolute timeout
 - 30-day absolute timeout for remembered sessions
-- HTTP-only, SameSite=Strict, high-priority session cookie
+- HTTP-only, SameSite=Strict, path-scoped refresh-token cookie
 - Secure cookies mandatory when `NODE_ENV=production`
 - Parameterized PostgreSQL queries and strict request validation
 - Helmet security headers and disabled Express fingerprinting
@@ -168,6 +203,8 @@ The route operates only on the session user's account. It verifies the current p
 - Configurable session termination after password reset or change
 
 Session and lockout values are stored in the singleton `auth_settings` row so a future Platform Administrator endpoint can update them without redeploying the service.
+
+Migration `004_add_jwt_refresh_sessions.sql` revokes legacy opaque-cookie sessions once because their old format cannot be safely converted into rotating refresh credentials. Existing users must log in again after that migration.
 
 ## Database roles
 

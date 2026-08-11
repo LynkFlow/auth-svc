@@ -59,7 +59,11 @@ const envSchema = z
                     return false;
                 }
             }, "DATABASE_URL must be a valid PostgreSQL URL"),
-        SESSION_COOKIE_NAME: z.string().min(1).max(64).default("lf.sid"),
+        REFRESH_COOKIE_NAME: z
+            .string()
+            .min(1)
+            .max(64)
+            .default("lf.refresh"),
         COOKIE_SECURE: z.preprocess(
             (value) =>
                 parseBoolean(value, process.env.NODE_ENV === "production"),
@@ -67,6 +71,29 @@ const envSchema = z
         ),
         COOKIE_SAME_SITE: z.enum(["strict", "lax"]).default("strict"),
         TRUST_PROXY: z.string().optional(),
+        JWT_PRIVATE_KEY_PATH: z
+            .string()
+            .min(1)
+            .default(".secrets/jwt-private.pem"),
+        JWT_PUBLIC_KEY_PATH: z
+            .string()
+            .min(1)
+            .default(".secrets/jwt-public.pem"),
+        JWT_KEY_ID: z.string().min(1).max(128).default("lf-auth-rs256-v1"),
+        JWT_ISSUER: z.string().min(1).default("lynkflow-auth"),
+        JWT_AUDIENCE: z.string().min(1).default("lynkflow-api"),
+        JWT_ACCESS_TOKEN_MINUTES: z.coerce
+            .number()
+            .int()
+            .min(1)
+            .max(60)
+            .default(15),
+        JWT_CLOCK_TOLERANCE_SECONDS: z.coerce
+            .number()
+            .int()
+            .min(0)
+            .max(60)
+            .default(5),
     })
     .superRefine((value, context) => {
         if (value.NODE_ENV === "production" && value.COOKIE_SECURE !== true) {
@@ -90,10 +117,17 @@ const config = Object.freeze({
     nodeEnv: parsed.data.NODE_ENV,
     port: parsed.data.PORT,
     databaseUrl: parsed.data.DATABASE_URL,
-    sessionCookieName: parsed.data.SESSION_COOKIE_NAME,
+    refreshCookieName: parsed.data.REFRESH_COOKIE_NAME,
     cookieSecure: parsed.data.COOKIE_SECURE,
     cookieSameSite: parsed.data.COOKIE_SAME_SITE,
     trustProxy: parseTrustProxy(parsed.data.TRUST_PROXY),
+    jwtPrivateKeyPath: parsed.data.JWT_PRIVATE_KEY_PATH,
+    jwtPublicKeyPath: parsed.data.JWT_PUBLIC_KEY_PATH,
+    jwtKeyId: parsed.data.JWT_KEY_ID,
+    jwtIssuer: parsed.data.JWT_ISSUER,
+    jwtAudience: parsed.data.JWT_AUDIENCE,
+    jwtAccessTokenMinutes: parsed.data.JWT_ACCESS_TOKEN_MINUTES,
+    jwtClockToleranceSeconds: parsed.data.JWT_CLOCK_TOLERANCE_SECONDS,
 });
 
 export default config;

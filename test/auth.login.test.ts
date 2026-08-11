@@ -2,7 +2,6 @@ import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
 import express from "express";
-import cookieParser from "cookie-parser";
 import type { QueryResultRow } from "pg";
 import type { AccountStatus } from "../src/models/userModel";
 
@@ -14,6 +13,7 @@ const { default: pool } = require("../src/db/pool") as typeof import("../src/db/
 const passwordService = require("../src/services/passwordService") as typeof import("../src/services/passwordService");
 const { default: authenticate } = require("../src/middleware/authenticate") as typeof import("../src/middleware/authenticate");
 const { errorHandler } = require("../src/middleware/errorHandler") as typeof import("../src/middleware/errorHandler");
+const tokenService = require("../src/services/tokenService") as typeof import("../src/services/tokenService");
 
 interface TestUserRow extends QueryResultRow {
     id: string;
@@ -36,7 +36,6 @@ interface LogoutSessionVerificationRow extends QueryResultRow {
 }
 
 const protectedApp = express();
-protectedApp.use(cookieParser());
 protectedApp.get("/protected", authenticate, (req, res) => {
     res.status(200).json({ auth: req.auth });
 });
@@ -196,7 +195,15 @@ test("authenticates an active user and establishes a server-side session", async
     assert.equal(response.body.data.user.role.code, "internal_user");
     assert.deepEqual(response.body.data.user.permissions, []);
     assert.equal("passwordHash" in response.body.data.user, false);
-    assert.equal("token" in response.body.data.session, false);
+    assert.equal(response.body.data.tokenType, "Bearer");
+    assert.equal(response.body.data.expiresIn, 900);
+    assert.equal(typeof response.body.data.accessToken, "string");
+
+    const principal = await tokenService.verifyAccessToken(
+        response.body.data.accessToken,
+    );
+    assert.equal(principal.userId, user.id);
+    assert.equal(principal.roleCode, "internal_user");
 
     const cookies = response.headers["set-cookie"] as string[] | undefined;
     assert.ok(cookies);
@@ -206,6 +213,8 @@ test("authenticates an active user and establishes a server-side session", async
     assert.match(cookie, /SameSite=Strict/i);
     assert.match(cookie, /Priority=High/i);
     assert.match(cookie, /Expires=/i);
+    assert.match(cookie, /^lf\.refresh=/i);
+    assert.match(cookie, /Path=\/api\/v1\/auth\/token/i);
     assert.equal(response.headers["cache-control"], "no-store");
 
     const { rows } = await pool.query<SessionVerificationRow>(
@@ -230,24 +239,27 @@ test("authenticates an active user and establishes a server-side session", async
 
     const protectedResponse = await request(protectedApp)
         .get("/protected")
-        .set("Cookie", cookies);
+        .set("Authorization", `Bearer ${response.body.data.accessToken}`);
     assert.equal(protectedResponse.status, 200);
     assert.equal(protectedResponse.body.auth.userId, user.id);
     assert.equal(protectedResponse.body.auth.roleCode, "internal_user");
 });
 
-test("rejects access to protected handlers without an active session", async () => {
+test("rejects access to protected handlers without a Bearer token", async () => {
     const response = await request(protectedApp).get("/protected");
 
     assert.equal(response.status, 401);
-    assert.equal(response.body.error.code, "AUTH_SESSION_EXPIRED");
+    assert.equal(response.body.error.code, "AUTH_ACCESS_TOKEN_INVALID");
 });
 
-test("requires an authenticated session to log out", async () => {
-    const response = await request(app).post("/api/v1/auth/logout");
+test("logout is idempotent when no refresh cookie is present", async () => {
+    const response = await request(app).post("/api/v1/auth/token/logout");
 
-    assert.equal(response.status, 401);
-    assert.equal(response.body.error.code, "AUTH_SESSION_EXPIRED");
+    assert.equal(response.status, 200);
+    assert.equal(response.body.message, "Logout successful.");
+    const cookies = response.headers["set-cookie"] as string[] | undefined;
+    assert.ok(cookies);
+    assert.match(cookies[0] ?? "", /^lf\.refresh=;/);
 });
 
 test("logs out only the current session and expires its cookie", async () => {
@@ -272,9 +284,11 @@ test("logs out only the current session and expires its cookie", async () => {
         | undefined;
     assert.ok(currentCookies);
     assert.ok(otherCookies);
+    const currentAccessToken = currentLogin.body.data.accessToken as string;
+    const otherAccessToken = otherLogin.body.data.accessToken as string;
 
     const response = await request(app)
-        .post("/api/v1/auth/logout")
+        .post("/api/v1/auth/token/logout")
         .set("Cookie", currentCookies);
 
     assert.equal(response.status, 200);
@@ -286,13 +300,14 @@ test("logs out only the current session and expires its cookie", async () => {
         | string[]
         | undefined;
     assert.ok(clearedCookies);
-    const clearedSessionCookie = clearedCookies[0];
-    assert.ok(clearedSessionCookie);
-    assert.match(clearedSessionCookie, /^lf\.sid=;/);
-    assert.match(clearedSessionCookie, /Expires=Thu, 01 Jan 1970/i);
-    assert.match(clearedSessionCookie, /HttpOnly/i);
-    assert.match(clearedSessionCookie, /SameSite=Strict/i);
-    assert.match(clearedSessionCookie, /Priority=High/i);
+    const clearedRefreshCookie = clearedCookies[0];
+    assert.ok(clearedRefreshCookie);
+    assert.match(clearedRefreshCookie, /^lf\.refresh=;/);
+    assert.match(clearedRefreshCookie, /Expires=Thu, 01 Jan 1970/i);
+    assert.match(clearedRefreshCookie, /HttpOnly/i);
+    assert.match(clearedRefreshCookie, /SameSite=Strict/i);
+    assert.match(clearedRefreshCookie, /Priority=High/i);
+    assert.match(clearedRefreshCookie, /Path=\/api\/v1\/auth\/token/i);
 
     const { rows } = await pool.query<LogoutSessionVerificationRow>(
         `
@@ -311,13 +326,13 @@ test("logs out only the current session and expires its cookie", async () => {
 
     const loggedOutRequest = await request(protectedApp)
         .get("/protected")
-        .set("Cookie", currentCookies);
+        .set("Authorization", `Bearer ${currentAccessToken}`);
     assert.equal(loggedOutRequest.status, 401);
     assert.equal(loggedOutRequest.body.error.code, "AUTH_SESSION_EXPIRED");
 
     const otherSessionRequest = await request(protectedApp)
         .get("/protected")
-        .set("Cookie", otherCookies);
+        .set("Authorization", `Bearer ${otherAccessToken}`);
     assert.equal(otherSessionRequest.status, 200);
     assert.equal(otherSessionRequest.body.auth.userId, user.id);
 });

@@ -4,6 +4,7 @@ import helmet from "helmet";
 import cors from "cors";
 import config from "./src/config/env";
 import authRoutes from "./src/routes/authRoutes";
+import { jwks } from "./src/controllers/authController";
 import {
     errorHandler,
     notFoundHandler,
@@ -33,6 +34,8 @@ app.get("/", (_req, res) => {
         message: "LF Auth Backend is running",
     });
 });
+
+app.get("/.well-known/jwks.json", jwks);
 
 app.use("/api/v1/auth", authRoutes);
 

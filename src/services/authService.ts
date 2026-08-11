@@ -1,7 +1,13 @@
-import { createHash, randomBytes } from "node:crypto";
+import {
+    createHash,
+    randomBytes,
+    randomUUID,
+    timingSafeEqual,
+} from "node:crypto";
 import pool from "../db/pool";
 import * as userRepository from "../repositories/userRepository";
 import * as sessionRepository from "../repositories/sessionRepository";
+import type { RefreshSession } from "../repositories/sessionRepository";
 import * as settingsRepository from "../repositories/settingsRepository";
 import AppError from "../errors/AppError";
 import {
@@ -11,6 +17,8 @@ import {
     type UserRecord,
 } from "../models/userModel";
 import * as passwordService from "./passwordService";
+import { issueAccessToken } from "./tokenService";
+import type { IssuedAccessToken } from "./tokenService";
 
 interface LoginParameters {
     email: string;
@@ -20,12 +28,24 @@ interface LoginParameters {
     userAgent: string | null;
 }
 
-export interface LoginResult {
+interface RefreshTokenDetails {
+    sessionId: string;
+    generation: number;
+}
+
+interface RefreshCredential {
+    token: string;
+    expiresAt: Date;
+    isPersistent: boolean;
+}
+
+export interface AuthenticationResult {
+    accessToken: IssuedAccessToken;
+    refreshToken: RefreshCredential;
+}
+
+export interface LoginResult extends AuthenticationResult {
     user: PublicUser;
-    session: {
-        token: string;
-        expiresAt: Date;
-    };
 }
 
 const dummyHashPromise = passwordService.hashPassword(
@@ -78,12 +98,81 @@ function invalidCredentialsError(): AppError {
     );
 }
 
+function invalidRefreshTokenError(): AppError {
+    return new AppError(
+        401,
+        "AUTH_REFRESH_TOKEN_INVALID",
+        "Your refresh session is invalid or has expired. Please log in again.",
+    );
+}
+
+function reusedRefreshTokenError(): AppError {
+    return new AppError(
+        401,
+        "AUTH_REFRESH_TOKEN_REUSED",
+        "Refresh token reuse was detected. Please log in again.",
+    );
+}
+
 function addMinutes(date: Date, minutes: number): Date {
-    return new Date(date.getTime() + minutes * 60 * 1000);
+    return new Date(date.getTime() + minutes * 60 * 1_000);
 }
 
 function addDays(date: Date, days: number): Date {
-    return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+    return new Date(date.getTime() + days * 24 * 60 * 60 * 1_000);
+}
+
+function hashRefreshToken(token: string): Buffer {
+    return createHash("sha256").update(token).digest();
+}
+
+function createRefreshToken(sessionId: string, generation: number): string {
+    return `${sessionId}.${generation}.${randomBytes(32).toString("base64url")}`;
+}
+
+function parseRefreshToken(token: string): RefreshTokenDetails | null {
+    if (token.length > 160) {
+        return null;
+    }
+
+    const [sessionId, generationText, secret, ...extra] = token.split(".");
+    if (
+        extra.length > 0 ||
+        sessionId === undefined ||
+        generationText === undefined ||
+        secret === undefined ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            sessionId,
+        ) ||
+        !/^\d{1,10}$/.test(generationText) ||
+        !/^[A-Za-z0-9_-]{43}$/.test(secret)
+    ) {
+        return null;
+    }
+
+    const generation = Number(generationText);
+    if (!Number.isSafeInteger(generation) || generation > 2_147_483_647) {
+        return null;
+    }
+
+    return { sessionId, generation };
+}
+
+function refreshSessionIsActive(
+    session: RefreshSession,
+    now = new Date(),
+): boolean {
+    return (
+        session.revokedAt === null &&
+        session.expiresAt > now &&
+        session.idleExpiresAt > now &&
+        session.accountStatus === ACCOUNT_STATUS.ACTIVE &&
+        (session.lockedUntil === null || session.lockedUntil <= now)
+    );
+}
+
+function hashesMatch(left: Buffer, right: Buffer): boolean {
+    return left.length === right.length && timingSafeEqual(left, right);
 }
 
 export async function login({
@@ -139,8 +228,9 @@ export async function login({
             addMinutes(now, settings.sessionIdleTimeoutMinutes).getTime(),
         ),
     );
-    const token = randomBytes(32).toString("base64url");
-    const tokenHash = createHash("sha256").update(token).digest();
+    const sessionId = randomUUID();
+    const refreshToken = createRefreshToken(sessionId, 0);
+    const refreshTokenHash = hashRefreshToken(refreshToken);
     const client = await pool.connect();
 
     try {
@@ -173,12 +263,20 @@ export async function login({
         }
 
         await sessionRepository.createSession(client, {
+            id: sessionId,
             userId: currentUser.id,
-            tokenHash,
+            refreshTokenHash,
             expiresAt,
             idleExpiresAt,
+            isPersistent: rememberMe,
             ipAddress,
             userAgent,
+        });
+        const accessToken = await issueAccessToken({
+            userId: currentUser.id,
+            sessionId,
+            roleCode: currentUser.roleCode,
+            permissions: currentUser.permissions,
         });
 
         await client.query("COMMIT");
@@ -187,9 +285,11 @@ export async function login({
 
         return {
             user: toPublicUser(currentUser),
-            session: {
-                token,
+            accessToken,
+            refreshToken: {
+                token: refreshToken,
                 expiresAt,
+                isPersistent: rememberMe,
             },
         };
     } catch (error) {
@@ -200,6 +300,142 @@ export async function login({
     }
 }
 
-export async function logout(sessionId: string): Promise<void> {
-    await sessionRepository.revokeSession(sessionId);
+export async function refreshAuthentication(
+    refreshToken: string,
+): Promise<AuthenticationResult> {
+    const tokenDetails = parseRefreshToken(refreshToken);
+    if (!tokenDetails) {
+        throw invalidRefreshTokenError();
+    }
+
+    const tokenHash = hashRefreshToken(refreshToken);
+    const client = await pool.connect();
+    let transactionOpen = false;
+
+    try {
+        await client.query("BEGIN");
+        transactionOpen = true;
+
+        const session = await sessionRepository.findRefreshSessionForUpdate(
+            client,
+            tokenDetails.sessionId,
+        );
+
+        if (!session || !refreshSessionIsActive(session)) {
+            if (session?.revokedAt === null) {
+                await sessionRepository.revokeSession(
+                    tokenDetails.sessionId,
+                    client,
+                );
+            }
+
+            await client.query("COMMIT");
+            transactionOpen = false;
+            throw invalidRefreshTokenError();
+        }
+
+        const tokenIsCurrent =
+            tokenDetails.generation === session.refreshGeneration &&
+            hashesMatch(tokenHash, session.refreshTokenHash);
+
+        if (!tokenIsCurrent) {
+            const tokenWasUsed = await sessionRepository.wasRefreshTokenUsed(
+                client,
+                session.sessionId,
+                tokenHash,
+            );
+
+            if (tokenWasUsed) {
+                await sessionRepository.revokeSession(session.sessionId, client);
+                await client.query("COMMIT");
+                transactionOpen = false;
+                throw reusedRefreshTokenError();
+            }
+
+            throw invalidRefreshTokenError();
+        }
+
+        const nextGeneration = session.refreshGeneration + 1;
+        const nextRefreshToken = createRefreshToken(
+            session.sessionId,
+            nextGeneration,
+        );
+        const rotated = await sessionRepository.rotateRefreshToken(
+            client,
+            session.sessionId,
+            session.refreshGeneration,
+            hashRefreshToken(nextRefreshToken),
+        );
+        if (!rotated) {
+            throw invalidRefreshTokenError();
+        }
+
+        const accessToken = await issueAccessToken({
+            userId: session.userId,
+            sessionId: session.sessionId,
+            roleCode: session.roleCode,
+            permissions: session.permissions,
+        });
+
+        await client.query("COMMIT");
+        transactionOpen = false;
+
+        return {
+            accessToken,
+            refreshToken: {
+                token: nextRefreshToken,
+                expiresAt: session.expiresAt,
+                isPersistent: session.isPersistent,
+            },
+        };
+    } catch (error) {
+        if (transactionOpen) {
+            await client.query("ROLLBACK");
+        }
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+export async function logout(refreshToken: string): Promise<void> {
+    const tokenDetails = parseRefreshToken(refreshToken);
+    if (!tokenDetails) {
+        return;
+    }
+
+    const tokenHash = hashRefreshToken(refreshToken);
+    const client = await pool.connect();
+
+    try {
+        await client.query("BEGIN");
+        const session = await sessionRepository.findRefreshSessionForUpdate(
+            client,
+            tokenDetails.sessionId,
+        );
+
+        if (session) {
+            const tokenIsCurrent =
+                tokenDetails.generation === session.refreshGeneration &&
+                hashesMatch(tokenHash, session.refreshTokenHash);
+            const tokenWasUsed = tokenIsCurrent
+                ? false
+                : await sessionRepository.wasRefreshTokenUsed(
+                      client,
+                      session.sessionId,
+                      tokenHash,
+                  );
+
+            if (tokenIsCurrent || tokenWasUsed) {
+                await sessionRepository.revokeSession(session.sessionId, client);
+            }
+        }
+
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
 }
