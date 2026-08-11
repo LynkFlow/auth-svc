@@ -1,43 +1,70 @@
-import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
-import config from "../config/env";
-import sessionCookieOptions from "../config/sessionCookie";
-import { findActiveSession } from "../repositories/sessionRepository";
+import { findActiveSessionById } from "../repositories/sessionRepository";
 import AppError from "../errors/AppError";
+import {
+    AccessTokenVerificationError,
+    verifyAccessToken,
+} from "../services/tokenService";
+
+function accessTokenError(expired = false): AppError {
+    return new AppError(
+        401,
+        expired ? "AUTH_ACCESS_TOKEN_EXPIRED" : "AUTH_ACCESS_TOKEN_INVALID",
+        expired
+            ? "Your access token has expired. Refresh it and try again."
+            : "A valid Bearer access token is required.",
+    );
+}
+
+function sessionExpiredError(): AppError {
+    return new AppError(
+        401,
+        "AUTH_SESSION_EXPIRED",
+        "Your session has expired. Please log in again.",
+    );
+}
+
+function bearerToken(req: Request): string | null {
+    const authorization = req.get("authorization");
+    if (!authorization || authorization.length > 8_192) {
+        return null;
+    }
+
+    const match = /^Bearer ([^\s]+)$/i.exec(authorization);
+    return match?.[1] ?? null;
+}
 
 export default async function authenticate(
     req: Request,
-    res: Response,
+    _res: Response,
     next: NextFunction,
 ): Promise<void> {
-    const token: unknown = req.cookies[config.sessionCookieName];
-
-    if (typeof token !== "string" || token.length === 0) {
-        next(
-            new AppError(
-                401,
-                "AUTH_SESSION_EXPIRED",
-                "Your session has expired. Please log in again.",
-            ),
-        );
+    const token = bearerToken(req);
+    if (!token) {
+        next(accessTokenError());
         return;
     }
 
-    const tokenHash = createHash("sha256").update(token).digest();
-    const session = await findActiveSession(tokenHash);
-
-    if (!session) {
-        res.clearCookie(config.sessionCookieName, sessionCookieOptions());
-        next(
-            new AppError(
-                401,
-                "AUTH_SESSION_EXPIRED",
-                "Your session has expired. Please log in again.",
-            ),
+    try {
+        const principal = await verifyAccessToken(token);
+        const session = await findActiveSessionById(
+            principal.sessionId,
+            principal.userId,
         );
-        return;
-    }
 
-    req.auth = session;
-    next();
+        if (!session) {
+            next(sessionExpiredError());
+            return;
+        }
+
+        req.auth = session;
+        next();
+    } catch (error) {
+        if (error instanceof AccessTokenVerificationError) {
+            next(accessTokenError(error.reason === "expired"));
+            return;
+        }
+
+        next(error);
+    }
 }

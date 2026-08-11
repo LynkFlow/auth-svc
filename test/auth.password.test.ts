@@ -40,6 +40,11 @@ interface ChangeVerificationRow extends QueryResultRow {
     changedEvents: number;
 }
 
+interface TestAuthentication {
+    accessToken: string;
+    cookies: string[];
+}
+
 const testRun = `password_test_${Date.now()}`;
 const currentPassword = "Current Password 42!";
 const newPassword = "New Secure Password 84!";
@@ -81,7 +86,7 @@ async function createUser(
     return user;
 }
 
-async function login(email: string): Promise<string[]> {
+async function login(email: string): Promise<TestAuthentication> {
     const response = await request(app)
         .post("/api/v1/auth/login")
         .send({ email, password: currentPassword });
@@ -89,7 +94,11 @@ async function login(email: string): Promise<string[]> {
 
     const cookies = response.headers["set-cookie"] as string[] | undefined;
     assert.ok(cookies);
-    return cookies;
+    assert.equal(typeof response.body.data.accessToken, "string");
+    return {
+        accessToken: response.body.data.accessToken,
+        cookies,
+    };
 }
 
 async function requestResetAndGetToken(user: TestUserRow): Promise<string> {
@@ -370,15 +379,15 @@ test("change password requires an authenticated session", async () => {
         });
 
     assert.equal(response.status, 401);
-    assert.equal(response.body.error.code, "AUTH_SESSION_EXPIRED");
+    assert.equal(response.body.error.code, "AUTH_ACCESS_TOKEN_INVALID");
 });
 
 test("change password rejects an incorrect current password", async () => {
     const user = await createUser("incorrect_current");
-    const cookies = await login(user.email);
+    const authentication = await login(user.email);
     const response = await request(app)
         .post("/api/v1/auth/password/change")
-        .set("Cookie", cookies)
+        .set("Authorization", `Bearer ${authentication.accessToken}`)
         .send({
             currentPassword: "Incorrect Password 42!",
             newPassword,
@@ -394,10 +403,10 @@ test("change password rejects an incorrect current password", async () => {
 
 test("change password rejects the existing password as the new password", async () => {
     const user = await createUser("change_unchanged");
-    const cookies = await login(user.email);
+    const authentication = await login(user.email);
     const response = await request(app)
         .post("/api/v1/auth/password/change")
-        .set("Cookie", cookies)
+        .set("Authorization", `Bearer ${authentication.accessToken}`)
         .send({
             currentPassword,
             newPassword: currentPassword,
@@ -410,13 +419,13 @@ test("change password rejects the existing password as the new password", async 
 
 test("change password preserves the current session and revokes other sessions and reset links", async () => {
     const user = await createUser("change_success");
-    const currentCookies = await login(user.email);
+    const currentAuthentication = await login(user.email);
     await login(user.email);
     const resetToken = await requestResetAndGetToken(user);
 
     const response = await request(app)
         .post("/api/v1/auth/password/change")
-        .set("Cookie", currentCookies)
+        .set("Authorization", `Bearer ${currentAuthentication.accessToken}`)
         .send({
             currentPassword,
             newPassword,
@@ -475,7 +484,7 @@ test("change password preserves the current session and revokes other sessions a
 
     const stillAuthenticated = await request(app)
         .post("/api/v1/auth/password/change")
-        .set("Cookie", currentCookies)
+        .set("Authorization", `Bearer ${currentAuthentication.accessToken}`)
         .send({
             currentPassword: newPassword,
             newPassword: "Another Secure Password 96!",

@@ -2,7 +2,9 @@ import type { CookieOptions, Request, Response } from "express";
 import {
     login as loginUser,
     logout as logoutUser,
+    refreshAuthentication,
 } from "../services/authService";
+import type { AuthenticationResult } from "../services/authService";
 import {
     completeActivation as activateAccount,
     validateActivationToken,
@@ -15,7 +17,8 @@ import {
 } from "../services/passwordManagementService";
 import { signup as registerUser } from "../services/signupService";
 import config from "../config/env";
-import sessionCookieOptions from "../config/sessionCookie";
+import refreshCookieOptions from "../config/refreshCookie";
+import { getPublicJwks } from "../services/tokenService";
 import type {
     ChangePasswordInput,
     CompleteActivationInput,
@@ -26,6 +29,42 @@ import type {
     ValidateActivationInput,
     ValidatePasswordResetInput,
 } from "../validators/authSchemas";
+
+function setRefreshCookie(
+    res: Response,
+    authentication: AuthenticationResult,
+): void {
+    const cookieOptions: CookieOptions = refreshCookieOptions();
+
+    if (authentication.refreshToken.isPersistent) {
+        cookieOptions.expires = authentication.refreshToken.expiresAt;
+    }
+
+    res.cookie(
+        config.refreshCookieName,
+        authentication.refreshToken.token,
+        cookieOptions,
+    );
+}
+
+function authenticationData(authentication: AuthenticationResult) {
+    return {
+        accessToken: authentication.accessToken.token,
+        tokenType: "Bearer" as const,
+        expiresIn: authentication.accessToken.expiresInSeconds,
+        accessTokenExpiresAt:
+            authentication.accessToken.expiresAt.toISOString(),
+        session: {
+            expiresAt: authentication.refreshToken.expiresAt.toISOString(),
+        },
+    };
+}
+
+export async function jwks(_req: Request, res: Response): Promise<Response> {
+    const keySet = await getPublicJwks();
+    res.set("Cache-Control", "public, max-age=300");
+    return res.status(200).json(keySet);
+}
 
 export async function signup(req: Request, res: Response): Promise<Response> {
     const body = req.validatedBody as SignupInput;
@@ -74,7 +113,7 @@ export async function resetPassword(
     const body = req.validatedBody as ResetPasswordInput;
     const result = await resetUserPassword(body.token, body.newPassword);
 
-    res.clearCookie(config.sessionCookieName, sessionCookieOptions());
+    res.clearCookie(config.refreshCookieName, refreshCookieOptions());
     return res.status(200).json({
         success: true,
         message:
@@ -107,13 +146,9 @@ export async function changePassword(
 }
 
 export async function logout(req: Request, res: Response): Promise<Response> {
-    const session = req.auth;
-    if (!session) {
-        throw new Error("Authenticated session context is missing.");
-    }
-
-    await logoutUser(session.sessionId);
-    res.clearCookie(config.sessionCookieName, sessionCookieOptions());
+    const candidate: unknown = req.cookies[config.refreshCookieName];
+    await logoutUser(typeof candidate === "string" ? candidate : "");
+    res.clearCookie(config.refreshCookieName, refreshCookieOptions());
 
     return res.status(200).json({
         success: true,
@@ -122,6 +157,29 @@ export async function logout(req: Request, res: Response): Promise<Response> {
             redirectPath: "/",
         },
     });
+}
+
+export async function refreshToken(
+    req: Request,
+    res: Response,
+): Promise<Response> {
+    const candidate: unknown = req.cookies[config.refreshCookieName];
+
+    try {
+        const result = await refreshAuthentication(
+            typeof candidate === "string" ? candidate : "",
+        );
+        setRefreshCookie(res, result);
+
+        return res.status(200).json({
+            success: true,
+            message: "Access token refreshed successfully.",
+            data: authenticationData(result),
+        });
+    } catch (error) {
+        res.clearCookie(config.refreshCookieName, refreshCookieOptions());
+        throw error;
+    }
 }
 
 export async function validateActivation(
@@ -165,22 +223,14 @@ export async function login(req: Request, res: Response): Promise<Response> {
         userAgent: userAgent ? userAgent.slice(0, 512) : null,
     });
 
-    const cookieOptions: CookieOptions = sessionCookieOptions();
-
-    if (body.rememberMe) {
-        cookieOptions.expires = result.session.expiresAt;
-    }
-
-    res.cookie(config.sessionCookieName, result.session.token, cookieOptions);
+    setRefreshCookie(res, result);
 
     return res.status(200).json({
         success: true,
         message: "Login successful.",
         data: {
             user: result.user,
-            session: {
-                expiresAt: result.session.expiresAt.toISOString(),
-            },
+            ...authenticationData(result),
         },
     });
 }

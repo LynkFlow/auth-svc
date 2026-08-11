@@ -6,6 +6,7 @@ import {
     forgotPassword,
     login,
     logout,
+    refreshToken,
     resetPassword,
     signup,
     validateActivation,
@@ -84,6 +85,23 @@ const activationLimiter = rateLimit({
     },
 });
 
+const refreshTokenLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    handler: (_req: Request, res: Response) => {
+        res.status(429).json({
+            success: false,
+            error: {
+                code: "AUTH_REFRESH_RATE_LIMITED",
+                message:
+                    "Too many token refresh attempts. Please try again later.",
+            },
+        });
+    },
+});
+
 const forgotPasswordIpLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 10,
@@ -153,7 +171,8 @@ const changePasswordLimiter = rateLimit({
 
 router.post("/signup", signupLimiter, validate(signupSchema), signup);
 router.post("/login", loginLimiter, validate(loginSchema), login);
-router.post("/logout", authenticate, logout);
+router.post("/token/refresh", refreshTokenLimiter, refreshToken);
+router.post("/token/logout", logout);
 router.post(
     "/activation/validate",
     activationLimiter,
