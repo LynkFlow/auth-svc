@@ -9,11 +9,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "start": "node dist/index.js",
     "dev": "nodemon --watch index.ts --watch app.ts --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
+    "dev:email-worker": "nodemon --watch scripts/emailWorker.ts --watch src --ext ts --exec \"npm run build && node dist/scripts/emailWorker.js\"",
     "db:migrate": "npm run build && npm run db:migrate:production",
     "db:migrate:production": "node dist/scripts/migrate.js",
     "jwt:keys:generate": "npm run build && node dist/scripts/generateJwtKeys.js",
+    "email:worker": "npm run build && npm run email:worker:production",
+    "email:worker:production": "node dist/scripts/emailWorker.js",
     "pretest": "npm run db:migrate",
-    "test": "npm run build:test && node --test --test-concurrency=1 dist-test/test/auth.login.test.js dist-test/test/auth.activation.test.js dist-test/test/auth.password.test.js dist-test/test/auth.signup.test.js dist-test/test/auth.jwt.test.js"
+    "test": "npm run build:test && node --test --test-concurrency=1 dist-test/test/auth.login.test.js dist-test/test/auth.activation.test.js dist-test/test/auth.password.test.js dist-test/test/auth.signup.test.js dist-test/test/auth.jwt.test.js dist-test/test/email.outbox.test.js"
   },
   "keywords": [],
   "author": "",
