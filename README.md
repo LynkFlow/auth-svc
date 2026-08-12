@@ -21,6 +21,9 @@ The application validates its environment at startup and never logs the database
 - `npm test` applies migrations, compiles the test target, and runs the integration suite.
 - `npm run db:migrate:production` applies migrations using an existing production build.
 - `npm run jwt:keys:generate` creates a local RSA key pair in the ignored `.secrets` directory. Production keys must be supplied through a secret manager or mounted secret files.
+- `npm run dev:email-worker` runs the email outbox worker with source watching in a second development terminal.
+- `npm run email:worker` builds and runs the email outbox worker once as a long-running process.
+- `npm run email:worker:production` runs the worker from an existing production build.
 
 ## Login API
 
@@ -194,6 +197,48 @@ The route operates only on the Bearer token's user account. It verifies the curr
 Session and lockout values are stored in the singleton `auth_settings` row so a future Platform Administrator endpoint can update them without redeploying the service.
 
 Migration `004_add_jwt_refresh_sessions.sql` revokes legacy opaque-cookie sessions once because their old format cannot be safely converted into rotating refresh credentials. Existing users must log in again after that migration.
+
+## Email delivery worker
+
+Auth transactions continue to insert durable events into `auth_outbox_events`. A separate worker sends those events to the notification service:
+
+```http
+POST http://localhost:3010/api/v1/emails/send
+Content-Type: application/json
+Idempotency-Key: auth-outbox:<event-id>:<generation>
+```
+
+Template codes match the outbox event types exactly:
+
+- `account.activation.requested`
+- `account.activated`
+- `password.reset.requested`
+- `password.reset.completed`
+- `password.changed`
+
+Run the API and worker in separate development terminals:
+
+```bash
+npm run dev
+npm run dev:email-worker
+```
+
+The worker atomically claims batches with `FOR UPDATE SKIP LOCKED`, commits the claim before making the HTTP request, and marks successful events with `published_at`. Failures use exponential backoff with jitter and become dead-lettered in `failed_at` after the configured maximum attempts. A stable idempotency key protects ambiguous network retries; the generation advances only when the notification service reports an idempotency conflict.
+
+After successful publication or permanent failure, sensitive `token` values are removed from the retained outbox payload. Monitor rows where `failed_at IS NOT NULL` and alert on a growing unpublished backlog.
+
+Useful operational queries:
+
+```sql
+SELECT count(*)
+FROM auth_outbox_events
+WHERE published_at IS NULL AND failed_at IS NULL;
+
+SELECT id, event_type, delivery_attempts, last_error, failed_at
+FROM auth_outbox_events
+WHERE failed_at IS NOT NULL
+ORDER BY failed_at DESC;
+```
 
 ## Database roles
 
