@@ -6,35 +6,6 @@ interface RequestBodyError extends Error {
   type?: string;
 }
 
-// AppError's `details` carries either a flat string[] (e.g. password-policy
-// violations) or a field-keyed record (validate.ts's VALIDATION_ERROR) --
-// this routes each shape onto ApiError's matching field rather than assuming
-// one or the other.
-function isFieldErrors(value: unknown): value is Record<string, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
-  );
-}
-
-function toApiError(error: AppError): ApiError {
-  const apiError: ApiError = {
-    code: error.code,
-    status: error.statusCode,
-    message: error.message,
-  };
-
-  if (Array.isArray(error.details)) {
-    apiError.details = error.details as string[];
-  } else if (isFieldErrors(error.details)) {
-    apiError.fieldErrors = error.details;
-  }
-
-  return apiError;
-}
-
 export function notFoundHandler(_req: Request, res: Response): void {
   res.status(404).json({
     success: false,
@@ -57,10 +28,13 @@ export function errorHandler(
     return;
   }
 
+  // Polymorphic -- every AppError subclass shapes its own ApiError via
+  // toApiError() (backend-conventions.md's "AppError: a class hierarchy"
+  // section).
   if (error instanceof AppError) {
     return res
       .status(error.statusCode)
-      .json({ success: false, error: toApiError(error) });
+      .json({ success: false, error: error.toApiError() });
   }
 
   const requestBodyError = error as RequestBodyError;
@@ -86,11 +60,10 @@ export function errorHandler(
     });
   }
 
-  console.error("Unhandled request error.", {
-    method: req.method,
-    path: req.originalUrl,
-    error: error instanceof Error ? error.message : "Unknown error",
-  });
+  req.log.error(
+    { method: req.method, path: req.originalUrl, err: error },
+    "unhandled request error",
+  );
 
   return res.status(500).json({
     success: false,

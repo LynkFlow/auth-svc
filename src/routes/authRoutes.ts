@@ -1,18 +1,14 @@
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, {
+  type NextFunction,
+  type Request,
+  type Response,
+  type Router,
+} from "express";
 import { rateLimit } from "express-rate-limit";
-import {
-  changePassword,
-  completeActivation,
-  forgotPassword,
-  login,
-  logout,
-  refreshToken,
-  resetPassword,
-  signup,
-  validateActivation,
-  validatePasswordReset,
-} from "../controllers/authController.js";
-import authenticate from "../middleware/authenticate.js";
+import type { AuthController } from "../controllers/AuthController.js";
+import type { AuthGuard } from "../guards/AuthGuard.js";
+import { createRateLimiter } from "../guards/createRateLimiter.js";
+import { useGuard } from "../guards/useGuard.js";
 import validate from "../middleware/validate.js";
 import {
   changePasswordSchema,
@@ -26,188 +22,136 @@ import {
 } from "../validators/authSchemas.js";
 import type { ForgotPasswordInput } from "../validators/authSchemas.js";
 
-const router = express.Router();
+export function createAuthRoutes(
+  authController: AuthController,
+  authGuard: AuthGuard,
+): Router {
+  const router = express.Router();
 
-router.use((_req: Request, res: Response, next: NextFunction) => {
-  res.set("Cache-Control", "no-store");
-  res.set("Pragma", "no-cache");
-  next();
-});
+  router.use((_req: Request, res: Response, next: NextFunction) => {
+    res.set("Cache-Control", "no-store");
+    res.set("Pragma", "no-cache");
+    next();
+  });
 
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  skipSuccessfulRequests: true,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many login attempts. Please try again later.",
-      },
-    });
-  },
-});
+  const loginLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many login attempts. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 20, skipSuccessfulRequests: true },
+  );
 
-const signupLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        // Reused across every rate-limited flow, matching
-        // @lynkflow/types' AuthErrorCode -- see the docblock there
-        // for the consolidation rationale (previously a
-        // per-flow code here that the frontend's exhaustive
-        // AuthErrorCode presentation map couldn't recognize).
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many sign-up attempts. Please try again later.",
-      },
-    });
-  },
-});
+  const signupLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many sign-up attempts. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 10 },
+  );
 
-const activationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 30,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many activation attempts. Please try again later.",
-      },
-    });
-  },
-});
+  const activationLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many activation attempts. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 30 },
+  );
 
-const refreshTokenLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 60,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many token refresh attempts. Please try again later.",
-      },
-    });
-  },
-});
+  const refreshTokenLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many token refresh attempts. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 60 },
+  );
 
-const forgotPasswordIpLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many password reset requests. Please try again later.",
-      },
-    });
-  },
-});
+  const forgotPasswordIpLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many password reset requests. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 10 },
+  );
 
-const forgotPasswordEmailLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 3,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  keyGenerator: (req: Request) => (req.validatedBody as ForgotPasswordInput).email,
-  handler: (_req: Request, res: Response) => {
-    res.status(202).json({
-      success: true,
-      message:
-        "If the email address exists in our system, a password reset link has been sent.",
-    });
-  },
-});
+  // Deliberately NOT createRateLimiter. This one keys per-email (not
+  // per-IP) and, once the limit is hit, still returns the same 202 "if
+  // this email exists..." response as a normal request -- not a 429. A
+  // 429 here would itself leak that the email address is enumerable (an
+  // attacker could tell a real account from a fake one purely by whether
+  // they get rate-limited on repeated attempts), which is exactly what
+  // forgotPassword's deliberately-ambiguous 202 response already exists to
+  // avoid. createRateLimiter's handler always returns 429 -- reusing it
+  // would silently reintroduce that leak, so this stays hand-written. See
+  // backend-conventions.md's "Rate limiting is NOT a Guard" section.
+  const forgotPasswordEmailLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 3,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    keyGenerator: (req: Request) => (req.validatedBody as ForgotPasswordInput).email,
+    handler: (_req: Request, res: Response) => {
+      res.status(202).json({
+        success: true,
+        message:
+          "If the email address exists in our system, a password reset link has been sent.",
+      });
+    },
+  });
 
-const passwordResetLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many password reset attempts. Please try again later.",
-      },
-    });
-  },
-});
+  const passwordResetLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many password reset attempts. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 20 },
+  );
 
-const changePasswordLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  handler: (_req: Request, res: Response) => {
-    res.status(429).json({
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many password change attempts. Please try again later.",
-      },
-    });
-  },
-});
+  const changePasswordLimiter = createRateLimiter(
+    "AUTH_RATE_LIMITED",
+    "Too many password change attempts. Please try again later.",
+    { windowMs: 15 * 60 * 1000, limit: 10 },
+  );
 
-router.post("/signup", signupLimiter, validate(signupSchema), signup);
-router.post("/login", loginLimiter, validate(loginSchema), login);
-router.post("/token/refresh", refreshTokenLimiter, refreshToken);
-router.post("/token/logout", logout);
-router.post(
-  "/activation/validate",
-  activationLimiter,
-  validate(validateActivationSchema),
-  validateActivation,
-);
-router.post(
-  "/activation/complete",
-  activationLimiter,
-  validate(completeActivationSchema),
-  completeActivation,
-);
-router.post(
-  "/password/forgot",
-  forgotPasswordIpLimiter,
-  validate(forgotPasswordSchema),
-  forgotPasswordEmailLimiter,
-  forgotPassword,
-);
-router.post(
-  "/password/reset/validate",
-  passwordResetLimiter,
-  validate(validatePasswordResetSchema),
-  validatePasswordReset,
-);
-router.post(
-  "/password/reset",
-  passwordResetLimiter,
-  validate(resetPasswordSchema),
-  resetPassword,
-);
-router.post(
-  "/password/change",
-  changePasswordLimiter,
-  authenticate,
-  validate(changePasswordSchema),
-  changePassword,
-);
+  router.post(
+    "/signup",
+    signupLimiter,
+    validate(signupSchema),
+    authController.signup,
+  );
+  router.post("/login", loginLimiter, validate(loginSchema), authController.login);
+  router.post(
+    "/token/refresh",
+    refreshTokenLimiter,
+    authController.refreshToken,
+  );
+  router.post("/token/logout", authController.logout);
+  router.post(
+    "/activation/validate",
+    activationLimiter,
+    validate(validateActivationSchema),
+    authController.validateActivation,
+  );
+  router.post(
+    "/activation/complete",
+    activationLimiter,
+    validate(completeActivationSchema),
+    authController.completeActivation,
+  );
+  router.post(
+    "/password/forgot",
+    forgotPasswordIpLimiter,
+    validate(forgotPasswordSchema),
+    forgotPasswordEmailLimiter,
+    authController.forgotPassword,
+  );
+  router.post(
+    "/password/reset/validate",
+    passwordResetLimiter,
+    validate(validatePasswordResetSchema),
+    authController.validatePasswordReset,
+  );
+  router.post(
+    "/password/reset",
+    passwordResetLimiter,
+    validate(resetPasswordSchema),
+    authController.resetPassword,
+  );
+  router.post(
+    "/password/change",
+    changePasswordLimiter,
+    useGuard(authGuard),
+    validate(changePasswordSchema),
+    authController.changePassword,
+  );
 
-export default router;
+  return router;
+}

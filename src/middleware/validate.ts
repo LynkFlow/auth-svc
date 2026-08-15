@@ -1,6 +1,6 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { ZodType } from "zod";
-import AppError from "../errors/AppError.js";
+import { ValidationError } from "../errors/ValidationErrors.js";
 
 export default function validate(schema: ZodType): RequestHandler {
   return function validationMiddleware(
@@ -21,9 +21,7 @@ export default function validate(schema: ZodType): RequestHandler {
         fieldErrors[field] ??= issue.message;
       }
 
-      next(
-        new AppError(400, "VALIDATION_ERROR", "The request is invalid.", fieldErrors),
-      );
+      next(new ValidationError(fieldErrors));
       return;
     }
 

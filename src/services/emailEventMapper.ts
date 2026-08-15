@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { OutboxEvent } from "../repositories/outboxRepository.js";
+import type { OutboxEvent } from "../repositories/OutboxRepository.js";
 
 interface EmailAddress {
   email: string;

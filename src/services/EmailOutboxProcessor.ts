@@ -1,11 +1,9 @@
-import * as outboxRepository from "../repositories/outboxRepository.js";
-import type { OutboxEvent } from "../repositories/outboxRepository.js";
-import type { DeliveryFailure } from "../repositories/outboxRepository.js";
+import type { DeliveryFailure, OutboxEvent } from "../repositories/OutboxRepository.js";
 import {
   EmailServiceResponseError,
   EmailServiceTransportError,
-} from "./emailServiceClient.js";
-import type { EmailSender } from "./emailServiceClient.js";
+} from "./EmailServiceClient.js";
+import type { EmailSender } from "./EmailServiceClient.js";
 import {
   ExpiredEmailEventError,
   InvalidEmailEventError,
@@ -19,7 +17,12 @@ interface EmailOutboxProcessorOptions {
   maxAttempts: number;
   lockTimeoutSeconds: number;
   emailClient: EmailSender;
-  outboxStore?: OutboxStore;
+  // Was optional with a module-level `outboxRepository` default before the
+  // class-based DI migration -- constructing its own dependency here would
+  // bypass container.ts as the one place `new` happens (backend-conventions.md).
+  // Callers (container.ts, scripts/emailWorker.ts) now always pass a real
+  // OutboxRepository instance explicitly.
+  outboxStore: OutboxStore;
   random?: () => number;
 }
 
@@ -118,7 +121,7 @@ export class EmailOutboxProcessor {
     maxAttempts,
     lockTimeoutSeconds,
     emailClient,
-    outboxStore = outboxRepository,
+    outboxStore,
     random = Math.random,
   }: EmailOutboxProcessorOptions) {
     this.workerId = workerId;

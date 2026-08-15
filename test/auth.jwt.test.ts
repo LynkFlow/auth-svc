@@ -13,11 +13,16 @@ const { default: pool } =
   require("../src/db/pool.js") as typeof import("../src/db/pool.js");
 const passwordService =
   require("../src/services/passwordService.js") as typeof import("../src/services/passwordService.js");
-const tokenService =
-  require("../src/services/tokenService.js") as typeof import("../src/services/tokenService.js");
 const { default: config } =
   require("../src/config/env.js") as typeof import("../src/config/env.js");
+const { buildContainer } =
+  require("../src/container.js") as typeof import("../src/container.js");
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+// Real, wired TokenService instance from the same composition root
+// app.ts uses -- tokenService.verifyAccessToken() used to be a bare
+// module function; it's a class instance method now.
+const tokenService = buildContainer().tokenService;
 
 interface RoleRow extends QueryResultRow {
   id: number;

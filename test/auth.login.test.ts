@@ -13,13 +13,21 @@ const { default: pool } =
   require("../src/db/pool.js") as typeof import("../src/db/pool.js");
 const passwordService =
   require("../src/services/passwordService.js") as typeof import("../src/services/passwordService.js");
-const { default: authenticate } =
-  require("../src/middleware/authenticate.js") as typeof import("../src/middleware/authenticate.js");
 const { errorHandler } =
   require("../src/middleware/errorHandler.js") as typeof import("../src/middleware/errorHandler.js");
-const tokenService =
-  require("../src/services/tokenService.js") as typeof import("../src/services/tokenService.js");
+const { useGuard } =
+  require("../src/guards/useGuard.js") as typeof import("../src/guards/useGuard.js");
+const { buildContainer } =
+  require("../src/container.js") as typeof import("../src/container.js");
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+// Real, wired instances from the same composition root app.ts uses --
+// this test needs authGuard/tokenService directly rather than going
+// through HTTP, which authenticate.ts's plain-middleware form used to
+// allow but the class-based AuthGuard (wired via useGuard()) doesn't
+// change the need for.
+const container = buildContainer();
+const tokenService = container.tokenService;
 
 interface TestUserRow extends QueryResultRow {
   id: string;
@@ -42,7 +50,7 @@ interface LogoutSessionVerificationRow extends QueryResultRow {
 }
 
 const protectedApp = express();
-protectedApp.get("/protected", authenticate, (req, res) => {
+protectedApp.get("/protected", useGuard(container.authGuard), (req, res) => {
   res.status(200).json({ auth: req.auth });
 });
 protectedApp.use(errorHandler);

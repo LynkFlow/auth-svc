@@ -2,18 +2,18 @@ import assert from "node:assert/strict";
 import type {
   DeliveryFailure,
   OutboxEvent,
-} from "../src/repositories/outboxRepository.js";
-import type { EmailSender } from "../src/services/emailServiceClient.js";
+} from "../src/repositories/OutboxRepository.js";
+import type { EmailSender } from "../src/services/EmailServiceClient.js";
 import {
   EmailServiceClient,
   EmailServiceResponseError,
   EmailServiceTransportError,
-} from "../src/services/emailServiceClient.js";
+} from "../src/services/EmailServiceClient.js";
 import { mapOutboxEventToEmail } from "../src/services/emailEventMapper.js";
 import {
   EmailOutboxProcessor,
   type OutboxStore,
-} from "../src/services/emailOutboxProcessor.js";
+} from "../src/services/EmailOutboxProcessor.js";
 
 function event(overrides: Partial<OutboxEvent> = {}): OutboxEvent {
   return {

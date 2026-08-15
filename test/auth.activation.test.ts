@@ -12,9 +12,14 @@ const { default: pool } =
   require("../src/db/pool.js") as typeof import("../src/db/pool.js");
 const passwordService =
   require("../src/services/passwordService.js") as typeof import("../src/services/passwordService.js");
-const activationService =
-  require("../src/services/activationService.js") as typeof import("../src/services/activationService.js");
+const { buildContainer } =
+  require("../src/container.js") as typeof import("../src/container.js");
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+// Real, wired ActivationService instance from the same composition root
+// app.ts uses -- issueActivationToken() used to be a bare module function;
+// it's a class instance method now.
+const activationService = buildContainer().activationService;
 
 interface RoleRow extends QueryResultRow {
   id: number;
@@ -289,11 +294,11 @@ describe("account activation", () => {
       .send({ token: issued.token });
     assert.equal(reusedResponse.status, 409);
     assert.equal(reusedResponse.body.error.code, "AUTH_ACCOUNT_ALREADY_ACTIVE");
-    // This AppError's details is a plain object ({ loginPath }), not an
-    // array, so errorHandler.ts's shape-based routing sends it out as
-    // fieldErrors, not details -- see errorHandler.ts's isFieldErrors()
-    // comment. loginPath isn't part of AuthApiError's typed contract either
-    // way (it's ad hoc convenience data auth-ui doesn't currently read).
+    // AccountAlreadyActiveError explicitly sets fieldErrors (not details)
+    // for loginPath, matching the old plain-object shape's routing --
+    // see that class's docblock. loginPath isn't part of AuthApiError's
+    // typed contract either way (ad hoc convenience data auth-ui doesn't
+    // currently read).
     assert.equal(reusedResponse.body.error.fieldErrors.loginPath, "/login");
   });
 

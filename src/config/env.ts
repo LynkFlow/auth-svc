@@ -55,6 +55,10 @@ const envSchema = z
           return false;
         }
       }, "DATABASE_URL must be a valid PostgreSQL URL"),
+    CORS_ORIGINS: z
+      .string()
+      .min(1)
+      .default("http://localhost:3000,http://localhost:3001,http://localhost:3002"),
     REFRESH_COOKIE_NAME: z.string().min(1).max(64).default("lf.refresh"),
     COOKIE_SECURE: z.preprocess(
       (value) => parseBoolean(value, process.env.NODE_ENV === "production"),
@@ -130,6 +134,9 @@ const config = Object.freeze({
   nodeEnv: parsed.data.NODE_ENV,
   port: parsed.data.PORT,
   databaseUrl: parsed.data.DATABASE_URL,
+  corsOrigins: parsed.data.CORS_ORIGINS.split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0),
   refreshCookieName: parsed.data.REFRESH_COOKIE_NAME,
   cookieSecure: parsed.data.COOKIE_SECURE,
   cookieSameSite: parsed.data.COOKIE_SAME_SITE,

@@ -1,17 +1,24 @@
-import app from "./app.js";
+import app, { container } from "./app.js";
 import config from "./src/config/env.js";
 import pool from "./src/db/pool.js";
-import { initializeTokenService } from "./src/services/tokenService.js";
+import logger from "./src/logging/logger.js";
 
 async function start(): Promise<void> {
-  await initializeTokenService();
+  await container.tokenService.initialize();
 
   const server = app.listen(config.port, () => {
-    console.log(`Server running on port ${config.port}`);
+    logger.info({ port: config.port }, `Server running on port ${config.port}`);
   });
 
+  let isShuttingDown = false;
+
   function shutdown(signal: string): void {
-    console.log(`${signal} received. Shutting down gracefully.`);
+    if (isShuttingDown) {
+      return;
+    }
+
+    isShuttingDown = true;
+    logger.info({ signal }, "shutting down gracefully");
 
     server.close((error?: Error) => {
       // server.close()'s callback must stay synchronous (Node expects
@@ -21,11 +28,9 @@ async function start(): Promise<void> {
         await pool.end();
 
         if (error) {
-          console.error("HTTP server shutdown failed.", error);
-          process.exit(1);
+          logger.error({ err: error }, "HTTP server shutdown failed");
+          process.exitCode = 1;
         }
-
-        process.exit(0);
       })();
     });
   }
@@ -35,9 +40,7 @@ async function start(): Promise<void> {
 }
 
 start().catch(async (error: unknown) => {
-  console.error("Application startup failed.", {
-    message: error instanceof Error ? error.message : "Unknown error",
-  });
+  logger.error({ err: error }, "application startup failed");
   await pool.end();
   process.exitCode = 1;
 });
