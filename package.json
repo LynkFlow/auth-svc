@@ -1,12 +1,16 @@
 {
   "name": "lf-auth-be",
   "version": "1.0.0",
+  "private": true,
   "description": "LynkFlow authentication microservice",
   "main": "dist/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.1"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "build:test": "tsc -p tsconfig.test.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "nodemon --watch index.ts --watch app.ts --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
     "dev:email-worker": "nodemon --watch scripts/emailWorker.ts --watch src --ext ts --exec \"npm run build && node dist/scripts/emailWorker.js\"",
@@ -16,13 +20,22 @@
     "email:worker": "npm run build && npm run email:worker:production",
     "email:worker:production": "node dist/scripts/emailWorker.js",
     "pretest": "npm run db:migrate",
-    "test": "npm run build:test && node --test --test-concurrency=1 dist-test/test/auth.login.test.js dist-test/test/auth.activation.test.js dist-test/test/auth.password.test.js dist-test/test/auth.signup.test.js dist-test/test/auth.jwt.test.js dist-test/test/email.outbox.test.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:coverage:warn": "npm run test:coverage || echo \"[coverage] Threshold not met -- see report above. Not blocking this commit; please add tests when you can.\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky || exit 0",
+    "check": "npm run typecheck && npm test",
+    "update:lynkflow": "npm install @lynkflow/config@latest @lynkflow/types@latest"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
+    "@lynkflow/types": "^0.4.0",
     "argon2": "0.45.1",
     "cookie-parser": "1.4.7",
     "cors": "^2.8.6",
@@ -34,14 +47,24 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@babel/preset-env": "^7.29.7",
+    "@babel/preset-typescript": "^7.29.7",
+    "@lynkflow/config": "^0.0.2",
     "@types/cookie-parser": "1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "5.0.6",
+    "@types/jest": "^30.0.0",
     "@types/node": "22.20.1",
     "@types/pg": "8.21.0",
     "@types/supertest": "7.2.1",
+    "babel-jest": "^30.4.1",
+    "eslint": "^10.8.1",
+    "husky": "^9.1.7",
+    "jest": "^30.4.2",
+    "lint-staged": "^17.3.0",
     "nodemon": "3.1.14",
+    "prettier": "^3.9.6",
     "supertest": "7.2.2",
-    "typescript": "7.0.2"
+    "typescript": "^6.0.3"
   }
 }

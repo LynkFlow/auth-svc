@@ -1,40 +1,40 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
-import pool from "../db/pool";
-import type { UserRecord } from "../models/userModel";
+import pool from "../db/pool.js";
+import type { UserRecord } from "../models/userModel.js";
 
 interface UserRow extends UserRecord, QueryResultRow {}
 
 export interface LoginFailure {
-    failedLoginAttempts: number;
-    lockedUntil: Date | null;
+  failedLoginAttempts: number;
+  lockedUntil: Date | null;
 }
 
 interface LoginFailureRow extends LoginFailure, QueryResultRow {}
 
 interface LoginSuccessRow extends QueryResultRow {
-    lastLoginAt: Date;
+  lastLoginAt: Date;
 }
 
 interface UpdatedPasswordRow extends QueryResultRow {
-    id: string;
+  id: string;
 }
 
 interface CreatedUserRow extends QueryResultRow {
-    id: string;
-    email: string;
+  id: string;
+  email: string;
 }
 
 export interface PendingRegistration {
-    email: string;
-    passwordHash: string;
-    roleCode: string;
-    fullName: string;
-    organizationName: string;
+  email: string;
+  passwordHash: string;
+  roleCode: string;
+  fullName: string;
+  organizationName: string;
 }
 
 export interface CreatedUser {
-    id: string;
-    email: string;
+  id: string;
+  email: string;
 }
 
 const USER_SELECT = `
@@ -61,35 +61,34 @@ const USER_SELECT = `
 `;
 
 export async function findByEmail(
-    email: string,
-    db: Pool | PoolClient = pool,
+  email: string,
+  db: Pool | PoolClient = pool,
 ): Promise<UserRecord | null> {
-    const { rows } = await db.query<UserRow>(
-        `${USER_SELECT} WHERE u.email = $1`,
-        [email],
-    );
+  const { rows } = await db.query<UserRow>(`${USER_SELECT} WHERE u.email = $1`, [
+    email,
+  ]);
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function findByIdForUpdate(
-    client: PoolClient,
-    userId: string,
+  client: PoolClient,
+  userId: string,
 ): Promise<UserRecord | null> {
-    const { rows } = await client.query<UserRow>(
-        `${USER_SELECT} WHERE u.id = $1 FOR UPDATE OF u`,
-        [userId],
-    );
+  const { rows } = await client.query<UserRow>(
+    `${USER_SELECT} WHERE u.id = $1 FOR UPDATE OF u`,
+    [userId],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function createPendingRegistration(
-    client: PoolClient,
-    registration: PendingRegistration,
+  client: PoolClient,
+  registration: PendingRegistration,
 ): Promise<CreatedUser | null> {
-    const { rows } = await client.query<CreatedUserRow>(
-        `
+  const { rows } = await client.query<CreatedUserRow>(
+    `
             INSERT INTO users (
                 email,
                 password_hash,
@@ -109,25 +108,25 @@ export async function createPendingRegistration(
             WHERE roles.code = $3
             RETURNING id, email::text AS email
         `,
-        [
-            registration.email,
-            registration.passwordHash,
-            registration.roleCode,
-            registration.fullName,
-            registration.organizationName,
-        ],
-    );
+    [
+      registration.email,
+      registration.passwordHash,
+      registration.roleCode,
+      registration.fullName,
+      registration.organizationName,
+    ],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function recordFailedLogin(
-    userId: string,
-    threshold: number,
-    lockoutMinutes: number,
+  userId: string,
+  threshold: number,
+  lockoutMinutes: number,
 ): Promise<LoginFailure | null> {
-    const { rows } = await pool.query<LoginFailureRow>(
-        `
+  const { rows } = await pool.query<LoginFailureRow>(
+    `
             UPDATE users
             SET
                 failed_login_attempts = CASE
@@ -148,18 +147,18 @@ export async function recordFailedLogin(
             WHERE id = $1
             RETURNING failed_login_attempts AS "failedLoginAttempts", locked_until AS "lockedUntil"
         `,
-        [userId, threshold, lockoutMinutes],
-    );
+    [userId, threshold, lockoutMinutes],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function recordSuccessfulLogin(
-    client: PoolClient,
-    userId: string,
+  client: PoolClient,
+  userId: string,
 ): Promise<LoginSuccessRow | null> {
-    const { rows } = await client.query<LoginSuccessRow>(
-        `
+  const { rows } = await client.query<LoginSuccessRow>(
+    `
             UPDATE users
             SET
                 failed_login_attempts = 0,
@@ -169,19 +168,19 @@ export async function recordSuccessfulLogin(
             WHERE id = $1
             RETURNING last_login_at AS "lastLoginAt"
         `,
-        [userId],
-    );
+    [userId],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function updatePassword(
-    client: PoolClient,
-    userId: string,
-    passwordHash: string,
+  client: PoolClient,
+  userId: string,
+  passwordHash: string,
 ): Promise<boolean> {
-    const { rows } = await client.query<UpdatedPasswordRow>(
-        `
+  const { rows } = await client.query<UpdatedPasswordRow>(
+    `
             UPDATE users
             SET
                 password_hash = $2,
@@ -192,8 +191,8 @@ export async function updatePassword(
               AND account_status = 'active'
             RETURNING id
         `,
-        [userId, passwordHash],
-    );
+    [userId, passwordHash],
+  );
 
-    return rows.length === 1;
+  return rows.length === 1;
 }

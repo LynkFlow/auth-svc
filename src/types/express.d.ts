@@ -1,12 +1,12 @@
-import type { AuthenticatedSession } from "../repositories/sessionRepository";
+import type { AuthenticatedSession } from "../repositories/sessionRepository.js";
 
 declare global {
-    namespace Express {
-        interface Request {
-            validatedBody?: unknown;
-            auth?: AuthenticatedSession;
-        }
+  namespace Express {
+    interface Request {
+      validatedBody?: unknown;
+      auth?: AuthenticatedSession;
     }
+  }
 }
 
 export {};

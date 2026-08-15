@@ -1,30 +1,17 @@
 {
+  "extends": "@lynkflow/config/tsconfig/node.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "Node16",
-    "moduleResolution": "Node16",
+    "types": ["node", "jest"],
     "rootDir": ".",
-    "outDir": "dist",
-    "sourceMap": true,
-    "declaration": false,
+    "noEmit": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "strict": true,
-    "exactOptionalPropertyTypes": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noImplicitReturns": true,
-    "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "skipLibCheck": false,
-    "types": ["node"]
+    "noUnusedParameters": true
   },
-  "include": [
-    "app.ts",
-    "index.ts",
-    "scripts/**/*.ts",
-    "src/**/*.ts"
-  ],
-  "exclude": ["dist", "node_modules", "test"]
+  "include": ["app.ts", "index.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
 }

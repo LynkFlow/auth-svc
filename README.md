@@ -2,6 +2,16 @@
 
 TypeScript/Express/PostgreSQL authentication microservice for LynkFlow.
 
+Wired to the platform's shared tooling: TypeScript pinned to 6.0.x, ESM
+(`"type": "module"` -- every relative import needs an explicit `.js`
+extension, even though the source is `.ts`), `@lynkflow/config` for
+ESLint/Prettier/the base tsconfig, Jest (via `@lynkflow/config/jest/node`,
+transformed with Babel, not `ts-jest` -- see `tooling.md`/`testing.md` at the
+workspace root) instead of Node's native test runner, and `@lynkflow/types`'
+`ApiError`/`AuthErrorCode`/auth DTOs for every request/response shape this
+service's login/signup/activation/password endpoints actually send and
+receive (see `errorHandler.ts`, `validate.ts`, and `authController.ts`).
+
 ## Setup
 
 When working from the adjacent `base-fe` repository, the recommended setup is:
@@ -29,7 +39,12 @@ The application validates its environment at startup and never logs the database
 - `npm run typecheck` checks both application and test code with strict TypeScript settings without emitting files.
 - `npm run build` emits production JavaScript and source maps to `dist/`.
 - `npm start` starts the compiled production application from `dist/`.
-- `npm test` applies migrations, compiles the test target, and runs the integration suite.
+- `npm test` applies migrations, then runs the Jest suite (Babel-transformed,
+  no separate compile step). Most test files are real integration tests
+  against a live PostgreSQL database -- they need `DATABASE_URL` pointed at
+  a real, migrated database, not just a syntactically valid one.
+- `npm run lint` / `npm run lint:fix` run ESLint (`@lynkflow/config/eslint/node`).
+- `npm run format` / `npm run format:check` run Prettier.
 - `npm run db:migrate:production` applies migrations using an existing production build.
 - `npm run jwt:keys:generate` creates a local RSA key pair in the ignored `.secrets` directory. Production keys must be supplied through a secret manager or mounted secret files.
 - `npm run dev:email-worker` runs the email outbox worker with source watching in a second development terminal.

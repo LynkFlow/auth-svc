@@ -1,53 +1,51 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
-import pool from "../db/pool";
-import type { AccountStatus } from "../models/userModel";
+import pool from "../db/pool.js";
+import type { AccountStatus } from "../models/userModel.js";
 
 export interface NewSession {
-    id: string;
-    userId: string;
-    refreshTokenHash: Buffer;
-    expiresAt: Date;
-    idleExpiresAt: Date;
-    isPersistent: boolean;
-    ipAddress: string | null;
-    userAgent: string | null;
+  id: string;
+  userId: string;
+  refreshTokenHash: Buffer;
+  expiresAt: Date;
+  idleExpiresAt: Date;
+  isPersistent: boolean;
+  ipAddress: string | null;
+  userAgent: string | null;
 }
 
 interface CreatedSessionRow extends QueryResultRow {
-    id: string;
+  id: string;
 }
 
 export interface AuthenticatedSession {
-    sessionId: string;
-    expiresAt: Date;
-    userId: string;
-    email: string;
-    roleCode: string;
-    permissions: string[];
+  sessionId: string;
+  expiresAt: Date;
+  userId: string;
+  email: string;
+  roleCode: string;
+  permissions: string[];
 }
 
-interface AuthenticatedSessionRow
-    extends AuthenticatedSession,
-        QueryResultRow {}
+interface AuthenticatedSessionRow extends AuthenticatedSession, QueryResultRow {}
 
 export interface RefreshSession extends AuthenticatedSession {
-    refreshTokenHash: Buffer;
-    refreshGeneration: number;
-    isPersistent: boolean;
-    idleExpiresAt: Date;
-    revokedAt: Date | null;
-    accountStatus: AccountStatus;
-    lockedUntil: Date | null;
+  refreshTokenHash: Buffer;
+  refreshGeneration: number;
+  isPersistent: boolean;
+  idleExpiresAt: Date;
+  revokedAt: Date | null;
+  accountStatus: AccountStatus;
+  lockedUntil: Date | null;
 }
 
 interface RefreshSessionRow extends RefreshSession, QueryResultRow {}
 
 export async function createSession(
-    client: PoolClient,
-    session: NewSession,
+  client: PoolClient,
+  session: NewSession,
 ): Promise<CreatedSessionRow> {
-    const { rows } = await client.query<CreatedSessionRow>(
-        `
+  const { rows } = await client.query<CreatedSessionRow>(
+    `
             INSERT INTO auth_sessions (
                 id,
                 user_id,
@@ -62,32 +60,32 @@ export async function createSession(
             VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8)
             RETURNING id
         `,
-        [
-            session.id,
-            session.userId,
-            session.refreshTokenHash,
-            session.expiresAt,
-            session.idleExpiresAt,
-            session.isPersistent,
-            session.ipAddress,
-            session.userAgent,
-        ],
-    );
+    [
+      session.id,
+      session.userId,
+      session.refreshTokenHash,
+      session.expiresAt,
+      session.idleExpiresAt,
+      session.isPersistent,
+      session.ipAddress,
+      session.userAgent,
+    ],
+  );
 
-    const createdSession = rows[0];
-    if (!createdSession) {
-        throw new Error("The authentication session could not be created.");
-    }
+  const createdSession = rows[0];
+  if (!createdSession) {
+    throw new Error("The authentication session could not be created.");
+  }
 
-    return createdSession;
+  return createdSession;
 }
 
 export async function findActiveSessionById(
-    sessionId: string,
-    userId: string,
+  sessionId: string,
+  userId: string,
 ): Promise<AuthenticatedSession | null> {
-    const { rows } = await pool.query<AuthenticatedSessionRow>(
-        `
+  const { rows } = await pool.query<AuthenticatedSessionRow>(
+    `
             WITH touched_session AS (
                 UPDATE auth_sessions s
                 SET
@@ -132,18 +130,18 @@ export async function findActiveSessionById(
             JOIN users ON users.id = touched.user_id
             JOIN roles ON roles.id = users.role_id
         `,
-        [sessionId, userId],
-    );
+    [sessionId, userId],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function findRefreshSessionForUpdate(
-    client: PoolClient,
-    sessionId: string,
+  client: PoolClient,
+  sessionId: string,
 ): Promise<RefreshSession | null> {
-    const { rows } = await client.query<RefreshSessionRow>(
-        `
+  const { rows } = await client.query<RefreshSessionRow>(
+    `
             SELECT
                 sessions.id AS "sessionId",
                 sessions.expires_at AS "expiresAt",
@@ -171,20 +169,20 @@ export async function findRefreshSessionForUpdate(
             WHERE sessions.id = $1
             FOR UPDATE OF sessions, users
         `,
-        [sessionId],
-    );
+    [sessionId],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function rotateRefreshToken(
-    client: PoolClient,
-    sessionId: string,
-    expectedGeneration: number,
-    refreshTokenHash: Buffer,
+  client: PoolClient,
+  sessionId: string,
+  expectedGeneration: number,
+  refreshTokenHash: Buffer,
 ): Promise<boolean> {
-    await client.query(
-        `
+  await client.query(
+    `
             INSERT INTO auth_refresh_token_history (
                 session_id,
                 generation,
@@ -196,11 +194,11 @@ export async function rotateRefreshToken(
             WHERE id = $1
               AND refresh_generation = $2
         `,
-        [sessionId, expectedGeneration],
-    );
+    [sessionId, expectedGeneration],
+  );
 
-    const result = await client.query(
-        `
+  const result = await client.query(
+    `
             UPDATE auth_sessions
             SET
                 token_hash = $3,
@@ -222,70 +220,70 @@ export async function rotateRefreshToken(
               AND expires_at > NOW()
               AND idle_expires_at > NOW()
         `,
-        [sessionId, expectedGeneration, refreshTokenHash],
-    );
+    [sessionId, expectedGeneration, refreshTokenHash],
+  );
 
-    return result.rowCount === 1;
+  return result.rowCount === 1;
 }
 
 export async function wasRefreshTokenUsed(
-    client: PoolClient,
-    sessionId: string,
-    refreshTokenHash: Buffer,
+  client: PoolClient,
+  sessionId: string,
+  refreshTokenHash: Buffer,
 ): Promise<boolean> {
-    const { rowCount } = await client.query(
-        `
+  const { rowCount } = await client.query(
+    `
             SELECT 1
             FROM auth_refresh_token_history
             WHERE session_id = $1
               AND token_hash = $2
         `,
-        [sessionId, refreshTokenHash],
-    );
+    [sessionId, refreshTokenHash],
+  );
 
-    return rowCount === 1;
+  return rowCount === 1;
 }
 
 export async function revokeSession(
-    sessionId: string,
-    db: Pool | PoolClient = pool,
+  sessionId: string,
+  db: Pool | PoolClient = pool,
 ): Promise<boolean> {
-    const result = await db.query(
-        `
+  const result = await db.query(
+    `
             UPDATE auth_sessions
             SET revoked_at = NOW()
             WHERE id = $1
               AND revoked_at IS NULL
         `,
-        [sessionId],
-    );
+    [sessionId],
+  );
 
-    return result.rowCount === 1;
+  return result.rowCount === 1;
 }
 
 export async function revokeUserSessions(
-    client: PoolClient,
-    userId: string,
-    exceptSessionId?: string,
+  client: PoolClient,
+  userId: string,
+  exceptSessionId?: string,
 ): Promise<number> {
-    const parameters: string[] = [userId];
-    let exceptionClause = "";
+  const parameters: string[] = [userId];
+  let exceptionClause = "";
 
-    if (exceptSessionId !== undefined) {
-        parameters.push(exceptSessionId);
-        exceptionClause = "AND id <> $2";
-    }
+  if (exceptSessionId !== undefined) {
+    parameters.push(exceptSessionId);
+    exceptionClause = "AND id <> $2";
+  }
 
-    const result = await client.query(
-        `
+  const result = await client.query(
+    `
             UPDATE auth_sessions
             SET revoked_at = NOW()
             WHERE user_id = $1
               AND revoked_at IS NULL
               ${exceptionClause}
         `,
-        parameters,
-    );
+    parameters,
+  );
 
-    return result.rowCount ?? 0;
+  return result.rowCount ?? 0;
 }

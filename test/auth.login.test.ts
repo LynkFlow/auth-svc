@@ -1,43 +1,49 @@
-import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
 import express from "express";
 import type { QueryResultRow } from "pg";
-import type { AccountStatus } from "../src/models/userModel";
+import type { AccountStatus } from "../src/models/userModel.js";
 
 process.env.NODE_ENV = "test";
 process.env.COOKIE_SECURE = "false";
 
-const { default: app } = require("../app") as typeof import("../app");
-const { default: pool } = require("../src/db/pool") as typeof import("../src/db/pool");
-const passwordService = require("../src/services/passwordService") as typeof import("../src/services/passwordService");
-const { default: authenticate } = require("../src/middleware/authenticate") as typeof import("../src/middleware/authenticate");
-const { errorHandler } = require("../src/middleware/errorHandler") as typeof import("../src/middleware/errorHandler");
-const tokenService = require("../src/services/tokenService") as typeof import("../src/services/tokenService");
+/* eslint-disable @typescript-eslint/no-require-imports */
+const { default: app } = require("../app.js") as typeof import("../app.js");
+const { default: pool } =
+  require("../src/db/pool.js") as typeof import("../src/db/pool.js");
+const passwordService =
+  require("../src/services/passwordService.js") as typeof import("../src/services/passwordService.js");
+const { default: authenticate } =
+  require("../src/middleware/authenticate.js") as typeof import("../src/middleware/authenticate.js");
+const { errorHandler } =
+  require("../src/middleware/errorHandler.js") as typeof import("../src/middleware/errorHandler.js");
+const tokenService =
+  require("../src/services/tokenService.js") as typeof import("../src/services/tokenService.js");
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 interface TestUserRow extends QueryResultRow {
-    id: string;
-    email: string;
+  id: string;
+  email: string;
 }
 
 interface RoleRow extends QueryResultRow {
-    id: number;
+  id: number;
 }
 
 interface SessionVerificationRow extends QueryResultRow {
-    hasLastLogin: boolean;
-    sessionCount: number;
-    tokensAreHashed: boolean;
+  hasLastLogin: boolean;
+  sessionCount: number;
+  tokensAreHashed: boolean;
 }
 
 interface LogoutSessionVerificationRow extends QueryResultRow {
-    activeSessions: number;
-    revokedSessions: number;
+  activeSessions: number;
+  revokedSessions: number;
 }
 
 const protectedApp = express();
 protectedApp.get("/protected", authenticate, (req, res) => {
-    res.status(200).json({ auth: req.auth });
+  res.status(200).json({ auth: req.auth });
 });
 protectedApp.use(errorHandler);
 
@@ -47,130 +53,126 @@ let passwordHash = "";
 let roleId = 0;
 
 function emailFor(label: string): string {
-    return `${testRun}_${label}@example.com`;
+  return `${testRun}_${label}@example.com`;
 }
 
 async function createUser(
-    label: string,
-    accountStatus: AccountStatus = "active",
+  label: string,
+  accountStatus: AccountStatus = "active",
 ): Promise<TestUserRow> {
-    const activatedAt =
-        accountStatus === "pending_activation" ? null : new Date();
-    const { rows } = await pool.query<TestUserRow>(
-        `
+  const activatedAt = accountStatus === "pending_activation" ? null : new Date();
+  const { rows } = await pool.query<TestUserRow>(
+    `
             INSERT INTO users (email, password_hash, role_id, account_status, activated_at)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, email::text AS email
         `,
-        [emailFor(label), passwordHash, roleId, accountStatus, activatedAt],
-    );
+    [emailFor(label), passwordHash, roleId, accountStatus, activatedAt],
+  );
 
-    const user = rows[0];
-    assert.ok(user);
-    return user;
+  const user = rows[0];
+  assert.ok(user);
+  return user;
 }
 
-before(async () => {
+describe("auth login and logout", () => {
+  beforeAll(async () => {
     passwordHash = await passwordService.hashPassword(password);
     const { rows } = await pool.query<RoleRow>(
-        "SELECT id FROM roles WHERE code = 'internal_user'",
+      "SELECT id FROM roles WHERE code = 'internal_user'",
     );
     const role = rows[0];
     assert.ok(role);
     roleId = role.id;
-});
+  });
 
-beforeEach(async () => {
-    await pool.query("DELETE FROM users WHERE email::text LIKE $1", [
-        `${testRun}%`,
-    ]);
-});
+  beforeEach(async () => {
+    await pool.query("DELETE FROM users WHERE email::text LIKE $1", [`${testRun}%`]);
+  });
 
-after(async () => {
-    await pool.query("DELETE FROM users WHERE email::text LIKE $1", [
-        `${testRun}%`,
-    ]);
+  afterAll(async () => {
+    await pool.query("DELETE FROM users WHERE email::text LIKE $1", [`${testRun}%`]);
     await pool.end();
-});
+  });
 
-test("rejects malformed login input", async () => {
+  it("rejects malformed login input", async () => {
     const response = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email: "not-an-email", password: "" });
+      .post("/api/v1/auth/login")
+      .send({ email: "not-an-email", password: "" });
 
     assert.equal(response.status, 400);
     assert.equal(response.body.error.code, "VALIDATION_ERROR");
-});
+  });
 
-test("rejects malformed JSON without leaking implementation details", async () => {
+  it("rejects malformed JSON without leaking implementation details", async () => {
     const response = await request(app)
-        .post("/api/v1/auth/login")
-        .set("Content-Type", "application/json")
-        .send('{"email":');
+      .post("/api/v1/auth/login")
+      .set("Content-Type", "application/json")
+      .send('{"email":');
 
     assert.equal(response.status, 400);
     assert.equal(response.body.error.code, "INVALID_JSON");
-});
+  });
 
-test("returns the same generic error for an unknown email and a wrong password", async () => {
+  it("returns the same generic error for an unknown email and a wrong password", async () => {
     const user = await createUser("generic_error");
 
     const [unknownResponse, wrongPasswordResponse] = await Promise.all([
-        request(app)
-            .post("/api/v1/auth/login")
-            .send({ email: emailFor("unknown"), password: "wrong" }),
-        request(app)
-            .post("/api/v1/auth/login")
-            .send({ email: user.email, password: "wrong" }),
+      request(app)
+        .post("/api/v1/auth/login")
+        .send({ email: emailFor("unknown"), password: "wrong" }),
+      request(app)
+        .post("/api/v1/auth/login")
+        .send({ email: user.email, password: "wrong" }),
     ]);
 
     assert.equal(unknownResponse.status, 401);
     assert.equal(wrongPasswordResponse.status, 401);
     assert.deepEqual(unknownResponse.body, wrongPasswordResponse.body);
     assert.equal(
-        wrongPasswordResponse.body.error.message,
-        "Invalid email address or password.",
+      wrongPasswordResponse.body.error.message,
+      "Invalid email address or password.",
     );
-});
+  });
 
-test("denies a suspended account with the required status message", async () => {
+  it("denies a suspended account with the required status message", async () => {
     const user = await createUser("suspended", "suspended");
     const response = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email: user.email, password });
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password });
 
     assert.equal(response.status, 403);
     assert.equal(response.body.error.code, "AUTH_ACCOUNT_SUSPENDED");
-});
+  });
 
-test("denies an account that has not been activated", async () => {
+  it("denies an account that has not been activated", async () => {
     const user = await createUser("pending", "pending_activation");
     const response = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email: user.email, password });
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password });
 
     assert.equal(response.status, 403);
     assert.equal(response.body.error.code, "AUTH_ACCOUNT_NOT_ACTIVATED");
-});
+  });
 
-test("denies an inactive account", async () => {
+  it("denies an inactive account", async () => {
     const user = await createUser("inactive", "inactive");
     const response = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email: user.email, password });
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password });
 
     assert.equal(response.status, 403);
     assert.equal(response.body.error.code, "AUTH_ACCOUNT_INACTIVE");
-});
+  });
 
-test("locks an account after the configured number of failed attempts", async () => {
+  it("locks an account after the configured number of failed attempts", async () => {
     const user = await createUser("lockout");
     let response: request.Response | undefined;
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
-        response = await request(app)
-            .post("/api/v1/auth/login")
-            .send({ email: user.email, password: "wrong" });
+      response = await request(app)
+        .post("/api/v1/auth/login")
+        .send({ email: user.email, password: "wrong" });
     }
 
     assert.ok(response);
@@ -178,16 +180,16 @@ test("locks an account after the configured number of failed attempts", async ()
     assert.equal(response.body.error.code, "AUTH_ACCOUNT_LOCKED");
 
     const lockedResponse = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email: user.email, password });
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password });
     assert.equal(lockedResponse.status, 423);
-});
+  });
 
-test("authenticates an active user and establishes a server-side session", async () => {
+  it("authenticates an active user and establishes a server-side session", async () => {
     const user = await createUser("success");
     const response = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email: user.email.toUpperCase(), password, rememberMe: true });
+      .post("/api/v1/auth/login")
+      .send({ email: user.email.toUpperCase(), password, rememberMe: true });
 
     assert.equal(response.status, 200);
     assert.equal(response.body.message, "Login successful.");
@@ -200,7 +202,7 @@ test("authenticates an active user and establishes a server-side session", async
     assert.equal(typeof response.body.data.accessToken, "string");
 
     const principal = await tokenService.verifyAccessToken(
-        response.body.data.accessToken,
+      response.body.data.accessToken as string,
     );
     assert.equal(principal.userId, user.id);
     assert.equal(principal.roleCode, "internal_user");
@@ -218,7 +220,7 @@ test("authenticates an active user and establishes a server-side session", async
     assert.equal(response.headers["cache-control"], "no-store");
 
     const { rows } = await pool.query<SessionVerificationRow>(
-        `
+      `
             SELECT
                 u.last_login_at IS NOT NULL AS "hasLastLogin",
                 count(s.id)::int AS "sessionCount",
@@ -228,7 +230,7 @@ test("authenticates an active user and establishes a server-side session", async
             WHERE u.id = $1
             GROUP BY u.id
         `,
-        [user.id],
+      [user.id],
     );
 
     const verification = rows[0];
@@ -238,21 +240,21 @@ test("authenticates an active user and establishes a server-side session", async
     assert.equal(verification.tokensAreHashed, true);
 
     const protectedResponse = await request(protectedApp)
-        .get("/protected")
-        .set("Authorization", `Bearer ${response.body.data.accessToken}`);
+      .get("/protected")
+      .set("Authorization", `Bearer ${response.body.data.accessToken}`);
     assert.equal(protectedResponse.status, 200);
     assert.equal(protectedResponse.body.auth.userId, user.id);
     assert.equal(protectedResponse.body.auth.roleCode, "internal_user");
-});
+  });
 
-test("rejects access to protected handlers without a Bearer token", async () => {
+  it("rejects access to protected handlers without a Bearer token", async () => {
     const response = await request(protectedApp).get("/protected");
 
     assert.equal(response.status, 401);
     assert.equal(response.body.error.code, "AUTH_ACCESS_TOKEN_INVALID");
-});
+  });
 
-test("logout is idempotent when no refresh cookie is present", async () => {
+  it("logout is idempotent when no refresh cookie is present", async () => {
     const response = await request(app).post("/api/v1/auth/token/logout");
 
     assert.equal(response.status, 200);
@@ -260,45 +262,35 @@ test("logout is idempotent when no refresh cookie is present", async () => {
     const cookies = response.headers["set-cookie"] as string[] | undefined;
     assert.ok(cookies);
     assert.match(cookies[0] ?? "", /^lf\.refresh=;/);
-});
+  });
 
-test("logs out only the current session and expires its cookie", async () => {
+  it("logs out only the current session and expires its cookie", async () => {
     const user = await createUser("logout");
     const [currentLogin, otherLogin] = await Promise.all([
-        request(app)
-            .post("/api/v1/auth/login")
-            .send({ email: user.email, password }),
-        request(app)
-            .post("/api/v1/auth/login")
-            .send({ email: user.email, password }),
+      request(app).post("/api/v1/auth/login").send({ email: user.email, password }),
+      request(app).post("/api/v1/auth/login").send({ email: user.email, password }),
     ]);
 
     assert.equal(currentLogin.status, 200);
     assert.equal(otherLogin.status, 200);
 
-    const currentCookies = currentLogin.headers["set-cookie"] as
-        | string[]
-        | undefined;
-    const otherCookies = otherLogin.headers["set-cookie"] as
-        | string[]
-        | undefined;
+    const currentCookies = currentLogin.headers["set-cookie"] as string[] | undefined;
+    const otherCookies = otherLogin.headers["set-cookie"] as string[] | undefined;
     assert.ok(currentCookies);
     assert.ok(otherCookies);
     const currentAccessToken = currentLogin.body.data.accessToken as string;
     const otherAccessToken = otherLogin.body.data.accessToken as string;
 
     const response = await request(app)
-        .post("/api/v1/auth/token/logout")
-        .set("Cookie", currentCookies);
+      .post("/api/v1/auth/token/logout")
+      .set("Cookie", currentCookies);
 
     assert.equal(response.status, 200);
     assert.equal(response.body.message, "Logout successful.");
     assert.equal(response.body.data.redirectPath, "/");
     assert.equal(response.headers["cache-control"], "no-store");
 
-    const clearedCookies = response.headers["set-cookie"] as
-        | string[]
-        | undefined;
+    const clearedCookies = response.headers["set-cookie"] as string[] | undefined;
     assert.ok(clearedCookies);
     const clearedRefreshCookie = clearedCookies[0];
     assert.ok(clearedRefreshCookie);
@@ -310,14 +302,14 @@ test("logs out only the current session and expires its cookie", async () => {
     assert.match(clearedRefreshCookie, /Path=\/api\/v1\/auth\/token/i);
 
     const { rows } = await pool.query<LogoutSessionVerificationRow>(
-        `
+      `
             SELECT
                 count(*) FILTER (WHERE revoked_at IS NULL)::int AS "activeSessions",
                 count(*) FILTER (WHERE revoked_at IS NOT NULL)::int AS "revokedSessions"
             FROM auth_sessions
             WHERE user_id = $1
         `,
-        [user.id],
+      [user.id],
     );
     const verification = rows[0];
     assert.ok(verification);
@@ -325,14 +317,15 @@ test("logs out only the current session and expires its cookie", async () => {
     assert.equal(verification.revokedSessions, 1);
 
     const loggedOutRequest = await request(protectedApp)
-        .get("/protected")
-        .set("Authorization", `Bearer ${currentAccessToken}`);
+      .get("/protected")
+      .set("Authorization", `Bearer ${currentAccessToken}`);
     assert.equal(loggedOutRequest.status, 401);
     assert.equal(loggedOutRequest.body.error.code, "AUTH_SESSION_EXPIRED");
 
     const otherSessionRequest = await request(protectedApp)
-        .get("/protected")
-        .set("Authorization", `Bearer ${otherAccessToken}`);
+      .get("/protected")
+      .set("Authorization", `Bearer ${otherAccessToken}`);
     assert.equal(otherSessionRequest.status, 200);
     assert.equal(otherSessionRequest.body.auth.userId, user.id);
+  });
 });

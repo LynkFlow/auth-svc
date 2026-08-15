@@ -1,0 +1,82 @@
+name: CI
+
+# @lynkflow/config and @lynkflow/types are real, published registry
+# dependencies. GitHub Packages has no anonymous install path, so the
+# Install step below sets LYNKFLOW_NPM_TOKEN -- .npmrc references it as
+# ${LYNKFLOW_NPM_TOKEN}, and without this env var that reference resolves
+# to nothing, producing a 401 regardless of whether the underlying secret's
+# token value is valid. This exact gap bit lynkflow-ui-kit/lynkflow-types
+# on 15 Aug 2026 (see .claude/rules/ci-cd.md) -- baked in correctly here
+# from the start instead of being discovered the same way again.
+#
+# Requires a repo secret: CROSS_REPO_PAT -- a classic PAT with `read:packages`
+# scope. Add it under Settings -> Secrets and variables -> Actions.
+#
+# Unlike template-svc/notifications-svc, this service's own test suite is
+# NOT DB-independent: package.json's "pretest" script runs "db:migrate"
+# before every "npm test", and the test files themselves create/query real
+# rows (test/auth.*.test.ts). A real Postgres service container is required
+# below -- DATABASE_URL/COOKIE_SECURE/NODE_ENV are set to match what
+# src/config/env.ts and migrations/*.sql expect (see .env.example).
+
+on:
+  push:
+    branches: [main, develop, "release/**", "hotfix/**"]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app_user
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: LynkFlow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app_user -d LynkFlow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://app_user:ci_test_password@localhost:5432/LynkFlow
+      COOKIE_SECURE: "false"
+      JWT_PRIVATE_KEY_PATH: .secrets/jwt-private.pem
+      JWT_PUBLIC_KEY_PATH: .secrets/jwt-public.pem
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js (from .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+
+      - name: Install
+        run: npm install
+        env:
+          LYNKFLOW_NPM_TOKEN: ${{ secrets.CROSS_REPO_PAT }}
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Generate JWT signing keys
+        run: npm run jwt:keys:generate
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

@@ -1,42 +1,42 @@
 import type { PoolClient, QueryResultRow } from "pg";
-import pool from "../db/pool";
+import pool from "../db/pool.js";
 
 export interface OutboxEvent {
-    id: string;
-    eventType: string;
-    aggregateId: string;
-    payload: unknown;
-    deliveryAttempts: number;
-    idempotencyGeneration: number;
+  id: string;
+  eventType: string;
+  aggregateId: string;
+  payload: unknown;
+  deliveryAttempts: number;
+  idempotencyGeneration: number;
 }
 
 interface OutboxEventRow extends OutboxEvent, QueryResultRow {}
 
 export async function enqueueEvent(
-    client: PoolClient,
-    eventType: string,
-    aggregateId: string,
-    payload: Record<string, unknown>,
+  client: PoolClient,
+  eventType: string,
+  aggregateId: string,
+  payload: Record<string, unknown>,
 ): Promise<void> {
-    await client.query(
-        `
+  await client.query(
+    `
             INSERT INTO auth_outbox_events (
                 event_type,
                 aggregate_id,
                 payload
             ) VALUES ($1, $2, $3::jsonb)
         `,
-        [eventType, aggregateId, JSON.stringify(payload)],
-    );
+    [eventType, aggregateId, JSON.stringify(payload)],
+  );
 }
 
 export async function claimPendingEvents(
-    workerId: string,
-    batchSize: number,
-    lockTimeoutSeconds: number,
+  workerId: string,
+  batchSize: number,
+  lockTimeoutSeconds: number,
 ): Promise<OutboxEvent[]> {
-    const { rows } = await pool.query<OutboxEventRow>(
-        `
+  const { rows } = await pool.query<OutboxEventRow>(
+    `
             WITH candidates AS (
                 SELECT id
                 FROM auth_outbox_events
@@ -66,18 +66,18 @@ export async function claimPendingEvents(
                 outbox.delivery_attempts AS "deliveryAttempts",
                 outbox.idempotency_generation AS "idempotencyGeneration"
         `,
-        [workerId, batchSize, lockTimeoutSeconds],
-    );
+    [workerId, batchSize, lockTimeoutSeconds],
+  );
 
-    return rows;
+  return rows;
 }
 
 export async function markPublished(
-    eventId: string,
-    workerId: string,
+  eventId: string,
+  workerId: string,
 ): Promise<boolean> {
-    const result = await pool.query(
-        `
+  const result = await pool.query(
+    `
             UPDATE auth_outbox_events
             SET
                 published_at = NOW(),
@@ -90,31 +90,31 @@ export async function markPublished(
               AND published_at IS NULL
               AND failed_at IS NULL
         `,
-        [eventId, workerId],
-    );
+    [eventId, workerId],
+  );
 
-    return result.rowCount === 1;
+  return result.rowCount === 1;
 }
 
 export interface DeliveryFailure {
-    eventId: string;
-    workerId: string;
-    error: string;
-    nextAttemptAt: Date;
-    permanentlyFailed: boolean;
-    advanceIdempotencyGeneration: boolean;
+  eventId: string;
+  workerId: string;
+  error: string;
+  nextAttemptAt: Date;
+  permanentlyFailed: boolean;
+  advanceIdempotencyGeneration: boolean;
 }
 
 export async function markDeliveryFailed({
-    eventId,
-    workerId,
-    error,
-    nextAttemptAt,
-    permanentlyFailed,
-    advanceIdempotencyGeneration,
+  eventId,
+  workerId,
+  error,
+  nextAttemptAt,
+  permanentlyFailed,
+  advanceIdempotencyGeneration,
 }: DeliveryFailure): Promise<boolean> {
-    const result = await pool.query(
-        `
+  const result = await pool.query(
+    `
             UPDATE auth_outbox_events
             SET
                 next_attempt_at = $3,
@@ -133,15 +133,15 @@ export async function markDeliveryFailed({
               AND published_at IS NULL
               AND failed_at IS NULL
         `,
-        [
-            eventId,
-            workerId,
-            nextAttemptAt,
-            error.slice(0, 2_000),
-            permanentlyFailed,
-            advanceIdempotencyGeneration,
-        ],
-    );
+    [
+      eventId,
+      workerId,
+      nextAttemptAt,
+      error.slice(0, 2_000),
+      permanentlyFailed,
+      advanceIdempotencyGeneration,
+    ],
+  );
 
-    return result.rowCount === 1;
+  return result.rowCount === 1;
 }

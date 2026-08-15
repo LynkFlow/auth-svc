@@ -1,261 +1,253 @@
 import { createHash, randomBytes } from "node:crypto";
-import pool from "../db/pool";
-import AppError from "../errors/AppError";
-import { ACCOUNT_STATUS } from "../models/userModel";
-import * as activationRepository from "../repositories/activationRepository";
-import type { ActivationRecord } from "../repositories/activationRepository";
-import * as outboxRepository from "../repositories/outboxRepository";
-import * as settingsRepository from "../repositories/settingsRepository";
-import * as userRepository from "../repositories/userRepository";
-import * as passwordService from "./passwordService";
+import pool from "../db/pool.js";
+import AppError from "../errors/AppError.js";
+import { ACCOUNT_STATUS } from "../models/userModel.js";
+import * as activationRepository from "../repositories/activationRepository.js";
+import type { ActivationRecord } from "../repositories/activationRepository.js";
+import * as outboxRepository from "../repositories/outboxRepository.js";
+import * as settingsRepository from "../repositories/settingsRepository.js";
+import * as userRepository from "../repositories/userRepository.js";
+import * as passwordService from "./passwordService.js";
 
 export interface ActivationDetails {
-    account: {
-        organizationName: string | null;
-        fullName: string | null;
-        email: string;
-    };
-    agreements: {
-        termsVersion: string;
-        privacyPolicyVersion: string;
-    };
-    expiresAt: string;
+  account: {
+    organizationName: string | null;
+    fullName: string | null;
+    email: string;
+  };
+  agreements: {
+    termsVersion: string;
+    privacyPolicyVersion: string;
+  };
+  expiresAt: string;
 }
 
 export interface IssuedActivationToken {
-    token: string;
-    expiresAt: Date;
+  token: string;
+  expiresAt: Date;
 }
 
 function hashToken(token: string): Buffer {
-    return createHash("sha256").update(token).digest();
+  return createHash("sha256").update(token).digest();
 }
 
 function invalidTokenError(): AppError {
-    return new AppError(
-        400,
-        "AUTH_ACTIVATION_TOKEN_INVALID",
-        "The activation link is invalid.",
-    );
+  return new AppError(
+    400,
+    "AUTH_ACTIVATION_TOKEN_INVALID",
+    "The activation link is invalid.",
+  );
 }
 
 function expiredTokenError(): AppError {
-    return new AppError(
-        410,
-        "AUTH_ACTIVATION_TOKEN_EXPIRED",
-        "The activation link has expired.",
-    );
+  return new AppError(
+    410,
+    "AUTH_ACTIVATION_TOKEN_EXPIRED",
+    "The activation link has expired.",
+  );
 }
 
 function alreadyActivatedError(): AppError {
-    return new AppError(
-        409,
-        "AUTH_ACCOUNT_ALREADY_ACTIVE",
-        "This account has already been activated.",
-        { loginPath: "/login" },
-    );
+  return new AppError(
+    409,
+    "AUTH_ACCOUNT_ALREADY_ACTIVE",
+    "This account has already been activated.",
+    { loginPath: "/login" },
+  );
 }
 
 function passwordRequiredError(): AppError {
-    return new AppError(
-        400,
-        "AUTH_ACTIVATION_PASSWORD_REQUIRED",
-        "A password is required to activate this account.",
-    );
+  return new AppError(
+    400,
+    "AUTH_ACTIVATION_PASSWORD_REQUIRED",
+    "A password is required to activate this account.",
+  );
 }
 
 function assertActivatable(
-    activation: ActivationRecord | null,
-    now = new Date(),
+  activation: ActivationRecord | null,
+  now = new Date(),
 ): asserts activation is ActivationRecord {
-    if (!activation) {
-        throw invalidTokenError();
-    }
+  if (!activation) {
+    throw invalidTokenError();
+  }
 
-    if (activation.accountStatus === ACCOUNT_STATUS.ACTIVE) {
-        throw alreadyActivatedError();
-    }
+  if (activation.accountStatus === ACCOUNT_STATUS.ACTIVE) {
+    throw alreadyActivatedError();
+  }
 
-    if (
-        activation.accountStatus !== ACCOUNT_STATUS.PENDING_ACTIVATION ||
-        activation.consumedAt !== null ||
-        activation.revokedAt !== null
-    ) {
-        throw invalidTokenError();
-    }
+  if (
+    activation.accountStatus !== ACCOUNT_STATUS.PENDING_ACTIVATION ||
+    activation.consumedAt !== null ||
+    activation.revokedAt !== null
+  ) {
+    throw invalidTokenError();
+  }
 
-    if (activation.expiresAt <= now) {
-        throw expiredTokenError();
-    }
+  if (activation.expiresAt <= now) {
+    throw expiredTokenError();
+  }
 }
 
 function toActivationDetails(
-    activation: ActivationRecord,
-    settings: settingsRepository.AuthSettings,
+  activation: ActivationRecord,
+  settings: settingsRepository.AuthSettings,
 ): ActivationDetails {
-    return {
-        account: {
-            organizationName: activation.organizationName,
-            fullName: activation.fullName,
-            email: activation.email,
-        },
-        agreements: {
-            termsVersion: settings.currentTermsVersion,
-            privacyPolicyVersion: settings.currentPrivacyPolicyVersion,
-        },
-        expiresAt: activation.expiresAt.toISOString(),
-    };
+  return {
+    account: {
+      organizationName: activation.organizationName,
+      fullName: activation.fullName,
+      email: activation.email,
+    },
+    agreements: {
+      termsVersion: settings.currentTermsVersion,
+      privacyPolicyVersion: settings.currentPrivacyPolicyVersion,
+    },
+    expiresAt: activation.expiresAt.toISOString(),
+  };
 }
 
 export async function validateActivationToken(
-    token: string,
+  token: string,
 ): Promise<ActivationDetails> {
-    const [activation, settings] = await Promise.all([
-        activationRepository.findByTokenHash(hashToken(token)),
-        settingsRepository.getAuthSettings(),
-    ]);
+  const [activation, settings] = await Promise.all([
+    activationRepository.findByTokenHash(hashToken(token)),
+    settingsRepository.getAuthSettings(),
+  ]);
 
-    assertActivatable(activation);
-    return toActivationDetails(activation, settings);
+  assertActivatable(activation);
+  return toActivationDetails(activation, settings);
 }
 
 export async function completeActivation(
-    token: string,
-    password?: string,
+  token: string,
+  password?: string,
 ): Promise<{ loginPath: string }> {
-    const tokenHash = hashToken(token);
-    const [activation, settings] = await Promise.all([
-        activationRepository.findByTokenHash(tokenHash),
-        settingsRepository.getAuthSettings(),
-    ]);
+  const tokenHash = hashToken(token);
+  const [activation, settings] = await Promise.all([
+    activationRepository.findByTokenHash(tokenHash),
+    settingsRepository.getAuthSettings(),
+  ]);
 
-    assertActivatable(activation);
+  assertActivatable(activation);
 
-    if (password === undefined && !activation.hasPassword) {
-        throw passwordRequiredError();
+  if (password === undefined && !activation.hasPassword) {
+    throw passwordRequiredError();
+  }
+
+  let passwordHash: string | null = null;
+  if (password !== undefined) {
+    const policyViolations = passwordService.passwordPolicyViolations(password, {
+      minimumLength: settings.passwordMinLength,
+      maximumLength: settings.passwordMaxLength,
+      requireUppercase: settings.passwordRequireUppercase,
+      requireLowercase: settings.passwordRequireLowercase,
+      requireNumber: settings.passwordRequireNumber,
+      requireSymbol: settings.passwordRequireSymbol,
+    });
+
+    if (policyViolations.length > 0) {
+      throw new AppError(
+        400,
+        "AUTH_PASSWORD_POLICY_VIOLATION",
+        "Password does not comply with the password policy.",
+        policyViolations,
+      );
     }
 
-    let passwordHash: string | null = null;
-    if (password !== undefined) {
-        const policyViolations = passwordService.passwordPolicyViolations(
-            password,
-            {
-                minimumLength: settings.passwordMinLength,
-                maximumLength: settings.passwordMaxLength,
-                requireUppercase: settings.passwordRequireUppercase,
-                requireLowercase: settings.passwordRequireLowercase,
-                requireNumber: settings.passwordRequireNumber,
-                requireSymbol: settings.passwordRequireSymbol,
-            },
-        );
+    passwordHash = await passwordService.hashPassword(password);
+  }
 
-        if (policyViolations.length > 0) {
-            throw new AppError(
-                400,
-                "AUTH_PASSWORD_POLICY_VIOLATION",
-                "Password does not comply with the password policy.",
-                policyViolations,
-            );
-        }
+  const client = await pool.connect();
 
-        passwordHash = await passwordService.hashPassword(password);
+  try {
+    await client.query("BEGIN");
+
+    const currentActivation = await activationRepository.findByTokenHash(
+      tokenHash,
+      client,
+      true,
+    );
+    assertActivatable(currentActivation);
+
+    if (passwordHash === null && !currentActivation.hasPassword) {
+      throw passwordRequiredError();
     }
 
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
-
-        const currentActivation = await activationRepository.findByTokenHash(
-            tokenHash,
-            client,
-            true,
-        );
-        assertActivatable(currentActivation);
-
-        if (passwordHash === null && !currentActivation.hasPassword) {
-            throw passwordRequiredError();
-        }
-
-        const activated = await activationRepository.activateUser(
-            client,
-            currentActivation.userId,
-            passwordHash,
-            settings.currentTermsVersion,
-            settings.currentPrivacyPolicyVersion,
-        );
-        if (!activated) {
-            throw alreadyActivatedError();
-        }
-
-        await activationRepository.consumeTokenAndRevokeOthers(
-            client,
-            currentActivation.id,
-            currentActivation.userId,
-        );
-        await outboxRepository.enqueueEvent(
-            client,
-            "account.activated",
-            currentActivation.userId,
-            {
-                userId: currentActivation.userId,
-                email: currentActivation.email,
-                fullName: currentActivation.fullName,
-                channel: "email",
-            },
-        );
-
-        await client.query("COMMIT");
-        return { loginPath: "/login" };
-    } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-    } finally {
-        client.release();
+    const activated = await activationRepository.activateUser(
+      client,
+      currentActivation.userId,
+      passwordHash,
+      settings.currentTermsVersion,
+      settings.currentPrivacyPolicyVersion,
+    );
+    if (!activated) {
+      throw alreadyActivatedError();
     }
+
+    await activationRepository.consumeTokenAndRevokeOthers(
+      client,
+      currentActivation.id,
+      currentActivation.userId,
+    );
+    await outboxRepository.enqueueEvent(
+      client,
+      "account.activated",
+      currentActivation.userId,
+      {
+        userId: currentActivation.userId,
+        email: currentActivation.email,
+        fullName: currentActivation.fullName,
+        channel: "email",
+      },
+    );
+
+    await client.query("COMMIT");
+    return { loginPath: "/login" };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function issueActivationToken(
-    userId: string,
+  userId: string,
 ): Promise<IssuedActivationToken> {
-    const settings = await settingsRepository.getAuthSettings();
-    const token = randomBytes(32).toString("base64url");
-    const tokenHash = hashToken(token);
-    const expiresAt = new Date(
-        Date.now() + settings.activationTokenValidityHours * 60 * 60 * 1000,
-    );
-    const client = await pool.connect();
+  const settings = await settingsRepository.getAuthSettings();
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(
+    Date.now() + settings.activationTokenValidityHours * 60 * 60 * 1000,
+  );
+  const client = await pool.connect();
 
-    try {
-        await client.query("BEGIN");
-        const user = await userRepository.findByIdForUpdate(client, userId);
+  try {
+    await client.query("BEGIN");
+    const user = await userRepository.findByIdForUpdate(client, userId);
 
-        if (!user || user.accountStatus !== ACCOUNT_STATUS.PENDING_ACTIVATION) {
-            if (user?.accountStatus === ACCOUNT_STATUS.ACTIVE) {
-                throw alreadyActivatedError();
-            }
+    if (!user || user.accountStatus !== ACCOUNT_STATUS.PENDING_ACTIVATION) {
+      if (user?.accountStatus === ACCOUNT_STATUS.ACTIVE) {
+        throw alreadyActivatedError();
+      }
 
-            throw new AppError(
-                409,
-                "AUTH_ACCOUNT_NOT_ACTIVATABLE",
-                "This account cannot be activated.",
-            );
-        }
-
-        await activationRepository.revokeUnusedTokens(client, userId);
-        await activationRepository.createToken(
-            client,
-            userId,
-            tokenHash,
-            expiresAt,
-        );
-        await client.query("COMMIT");
-
-        return { token, expiresAt };
-    } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-    } finally {
-        client.release();
+      throw new AppError(
+        409,
+        "AUTH_ACCOUNT_NOT_ACTIVATABLE",
+        "This account cannot be activated.",
+      );
     }
+
+    await activationRepository.revokeUnusedTokens(client, userId);
+    await activationRepository.createToken(client, userId, tokenHash, expiresAt);
+    await client.query("COMMIT");
+
+    return { token, expiresAt };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

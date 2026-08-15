@@ -1,27 +1,27 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
-import pool from "../db/pool";
-import type { AccountStatus } from "../models/userModel";
+import pool from "../db/pool.js";
+import type { AccountStatus } from "../models/userModel.js";
 
 export interface ActivationRecord {
-    id: string;
-    userId: string;
-    email: string;
-    fullName: string | null;
-    organizationName: string | null;
-    accountStatus: AccountStatus;
-    hasPassword: boolean;
-    expiresAt: Date;
-    consumedAt: Date | null;
-    revokedAt: Date | null;
+  id: string;
+  userId: string;
+  email: string;
+  fullName: string | null;
+  organizationName: string | null;
+  accountStatus: AccountStatus;
+  hasPassword: boolean;
+  expiresAt: Date;
+  consumedAt: Date | null;
+  revokedAt: Date | null;
 }
 interface ActivationRow extends ActivationRecord, QueryResultRow {}
 
 interface CreatedTokenRow extends QueryResultRow {
-    id: string;
+  id: string;
 }
 
 interface UpdatedUserRow extends QueryResultRow {
-    id: string;
+  id: string;
 }
 
 const ACTIVATION_SELECT = `
@@ -41,45 +41,45 @@ const ACTIVATION_SELECT = `
 `;
 
 export async function findByTokenHash(
-    tokenHash: Buffer,
-    db: Pool | PoolClient = pool,
-    lock = false,
+  tokenHash: Buffer,
+  db: Pool | PoolClient = pool,
+  lock = false,
 ): Promise<ActivationRecord | null> {
-    const lockClause = lock ? "FOR UPDATE OF activation, users" : "";
-    const { rows } = await db.query<ActivationRow>(
-        `${ACTIVATION_SELECT}
+  const lockClause = lock ? "FOR UPDATE OF activation, users" : "";
+  const { rows } = await db.query<ActivationRow>(
+    `${ACTIVATION_SELECT}
          WHERE activation.token_hash = $1
          ${lockClause}`,
-        [tokenHash],
-    );
+    [tokenHash],
+  );
 
-    return rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function revokeUnusedTokens(
-    client: PoolClient,
-    userId: string,
+  client: PoolClient,
+  userId: string,
 ): Promise<void> {
-    await client.query(
-        `
+  await client.query(
+    `
             UPDATE account_activation_tokens
             SET revoked_at = NOW()
             WHERE user_id = $1
               AND consumed_at IS NULL
               AND revoked_at IS NULL
         `,
-        [userId],
-    );
+    [userId],
+  );
 }
 
 export async function createToken(
-    client: PoolClient,
-    userId: string,
-    tokenHash: Buffer,
-    expiresAt: Date,
+  client: PoolClient,
+  userId: string,
+  tokenHash: Buffer,
+  expiresAt: Date,
 ): Promise<string> {
-    const { rows } = await client.query<CreatedTokenRow>(
-        `
+  const { rows } = await client.query<CreatedTokenRow>(
+    `
             INSERT INTO account_activation_tokens (
                 user_id,
                 token_hash,
@@ -87,26 +87,26 @@ export async function createToken(
             ) VALUES ($1, $2, $3)
             RETURNING id
         `,
-        [userId, tokenHash, expiresAt],
-    );
+    [userId, tokenHash, expiresAt],
+  );
 
-    const token = rows[0];
-    if (!token) {
-        throw new Error("The activation token could not be created.");
-    }
+  const token = rows[0];
+  if (!token) {
+    throw new Error("The activation token could not be created.");
+  }
 
-    return token.id;
+  return token.id;
 }
 
 export async function activateUser(
-    client: PoolClient,
-    userId: string,
-    passwordHash: string | null,
-    termsVersion: string,
-    privacyPolicyVersion: string,
+  client: PoolClient,
+  userId: string,
+  passwordHash: string | null,
+  termsVersion: string,
+  privacyPolicyVersion: string,
 ): Promise<boolean> {
-    const { rows } = await client.query<UpdatedUserRow>(
-        `
+  const { rows } = await client.query<UpdatedUserRow>(
+    `
             UPDATE users
             SET
                 password_hash = COALESCE($2::text, password_hash),
@@ -124,34 +124,34 @@ export async function activateUser(
               AND (password_hash IS NOT NULL OR $2::text IS NOT NULL)
             RETURNING id
         `,
-        [userId, passwordHash, termsVersion, privacyPolicyVersion],
-    );
+    [userId, passwordHash, termsVersion, privacyPolicyVersion],
+  );
 
-    return rows.length === 1;
+  return rows.length === 1;
 }
 
 export async function consumeTokenAndRevokeOthers(
-    client: PoolClient,
-    activationId: string,
-    userId: string,
+  client: PoolClient,
+  activationId: string,
+  userId: string,
 ): Promise<void> {
-    const result = await client.query(
-        `
+  const result = await client.query(
+    `
             UPDATE account_activation_tokens
             SET consumed_at = NOW()
             WHERE id = $1
               AND consumed_at IS NULL
               AND revoked_at IS NULL
         `,
-        [activationId],
-    );
+    [activationId],
+  );
 
-    if (result.rowCount !== 1) {
-        throw new Error("The activation token could not be consumed.");
-    }
+  if (result.rowCount !== 1) {
+    throw new Error("The activation token could not be consumed.");
+  }
 
-    await client.query(
-        `
+  await client.query(
+    `
             UPDATE account_activation_tokens
             SET revoked_at = NOW()
             WHERE user_id = $1
@@ -159,6 +159,6 @@ export async function consumeTokenAndRevokeOthers(
               AND consumed_at IS NULL
               AND revoked_at IS NULL
         `,
-        [userId, activationId],
-    );
+    [userId, activationId],
+  );
 }
