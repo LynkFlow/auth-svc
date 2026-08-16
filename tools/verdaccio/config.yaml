@@ -1,0 +1,55 @@
+# Local Verdaccio registry config for LynkFlow -- see docs/packages-guide.md's
+# "Local registry (Verdaccio)" section for the full setup + workflow.
+#
+# This is a duplicate of the canonical copy at the workspace root
+# (tools/verdaccio/config.yaml, one level above every repo). Since each
+# LynkFlow repo is independently clonable (architecture.md), a developer who
+# clones only this repo -- without the rest of the workspace -- would
+# otherwise have no way to spin up the shared local registry at all. Kept
+# byte-identical to the workspace-root copy (same port, same package rules)
+# so it behaves the same regardless of which repo you happen to run it from
+# -- but only run one instance at a time, since they all bind :4873.
+
+# Where Verdaccio stores published tarballs/metadata. Gitignored (see
+# tools/verdaccio/.gitignore) -- this is disposable local state, never
+# something to commit or treat as a real release artifact.
+storage: ./storage
+
+auth:
+  htpasswd:
+    file: ./htpasswd
+
+packages:
+  # Every @lynkflow/* package: readable by anyone, publishable by anyone --
+  # no `npm adduser` / login step required. This is a disposable local
+  # rehearsal registry (tarballs live in ./storage, gitignored, wiped
+  # freely) -- requiring auth here bought no real safety, it only made the
+  # local workflow slower and easier to get wrong (see the 11 Aug 2026
+  # incident in publishing.md: a developer's `npm run publish:local`
+  # actually reached the REAL registry, not this one -- unrelated to auth,
+  # but auth on a throwaway local registry was never doing useful work
+  # either way). Anonymous unpublish is scoped the same way for consistency
+  # -- there's nothing here worth protecting from yourself.
+  "@lynkflow/*":
+    access: $all
+    publish: $anonymous
+    unpublish: $anonymous
+
+  # Everything else: this instance is never actually asked for a non-
+  # @lynkflow package (each repo's .npmrc scopes ONLY @lynkflow to this
+  # registry), but Verdaccio requires a catch-all entry, and proxying to the
+  # real npm registry keeps this config correct if that ever changes.
+  "**":
+    access: $all
+    publish: $authenticated
+    proxy: npmjs
+
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+
+listen: localhost:4873
+
+# Quiet by default -- flip to "info"/"http" while debugging a publish/install
+# that isn't behaving as expected.
+log: { type: stdout, format: pretty, level: warn }
