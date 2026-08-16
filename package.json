@@ -35,7 +35,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@lynkflow/types": "^0.4.0",
+    "@lynkflow/types": "^0.4.1",
     "argon2": "0.45.1",
     "cookie-parser": "1.4.7",
     "cors": "^2.8.6",
